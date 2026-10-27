@@ -42,10 +42,24 @@ class AdServiceImplTest {
     }
 
     @Test
-    void getAds_withKnownCategory_returnsAds() {
-        AdRequest request = AdRequest.newBuilder().addContextKeys("clothing").build();
+    void getAds_withDepartmentKey_returnsItsTwoAds() {
+        AdRequest request = AdRequest.newBuilder().addContextKeys("kitchen").build();
         AdResponse response = stub.getAds(request);
-        assertFalse(response.getAdsList().isEmpty(), "should return ads for known category");
+        assertEquals(2, response.getAdsCount());
+        for (Ad ad : response.getAdsList()) {
+            assertEquals("/?category=kitchen", ad.getRedirectUrl());
+        }
+    }
+
+    @Test
+    void getAds_withProductCategories_returnsOnlyTheDepartmentsAds() {
+        AdRequest request = AdRequest.newBuilder()
+                .addContextKeys("women").addContextKeys("footwear").addContextKeys("womens-shoes").build();
+        AdResponse response = stub.getAds(request);
+        assertEquals(2, response.getAdsCount());
+        for (Ad ad : response.getAdsList()) {
+            assertEquals("/?category=women", ad.getRedirectUrl());
+        }
     }
 
     @Test
@@ -53,6 +67,7 @@ class AdServiceImplTest {
         AdRequest request = AdRequest.newBuilder().build();
         AdResponse response = stub.getAds(request);
         assertEquals(2, response.getAdsCount(), "empty context should fall back to 2 random ads");
+        assertNotEquals(response.getAds(0), response.getAds(1), "the two random ads should differ");
     }
 
     @Test

@@ -2,8 +2,6 @@ package hipstershop;
 
 import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
-import java.util.ArrayList;
-import java.util.Collection;
 import java.util.List;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -31,14 +29,7 @@ final class AdServiceImpl extends AdServiceGrpc.AdServiceImplBase {
         try {
             logger.info("Received ad request (context_keys={})", req.getContextKeysList());
 
-            List<Ad> ads = new ArrayList<>();
-
-            if (req.getContextKeysCount() > 0) {
-                for (String key : req.getContextKeysList()) {
-                    Collection<Ad> byCategory = AdsMap.getByCategory(key);
-                    ads.addAll(byCategory);
-                }
-            }
+            List<Ad> ads = AdsMap.getForContext(req.getContextKeysList());
 
             if (ads.isEmpty()) {
                 ads = AdsMap.getRandom();
