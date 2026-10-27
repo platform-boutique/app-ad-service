@@ -1,6 +1,6 @@
 # ad-service
 
-A gRPC service that serves contextual advertisements for the platform-demo e-commerce platform. It returns ads keyed by product category, falling back to random ads when no context is given or nothing matches. It is stateless, has no downstream dependencies, and is called only by `frontend`.
+A gRPC service that serves contextual advertisements for the platform-demo e-commerce platform (demo store brand: Everly). It returns ads for the store's departments, keyed by the product categories the frontend sends, falling back to two random ads when no context is given or nothing matches. It is stateless, has no downstream dependencies, and is called only by `frontend`.
 
 Part of the [platform-demo](https://github.com/platform-boutique) platform — microservices, observability (LGTM stack), GitOps (Argo CD), policy enforcement (Kyverno), infrastructure provisioning (Crossplane) and an internal developer portal (Backstage). See the master `README.md` in the platform-demo root for the whole-system view.
 
@@ -24,9 +24,30 @@ Package `hipstershop`, service `AdService` ([`src/main/proto/ad.proto`](src/main
 
 | Method | Request | Response | Behaviour |
 |---|---|---|---|
-| `GetAds` | `AdRequest{ repeated string context_keys }` | `AdResponse{ repeated Ad ads }` (`Ad{ redirect_url, text }`) | For every context key, returns **all** ads registered for that category. If the result is empty (no keys, or no category matched), returns 2 random ads (may contain the same ad twice). |
+| `GetAds` | `AdRequest{ repeated string context_keys }` | `AdResponse{ repeated Ad ads }` (`Ad{ redirect_url, text }`) | Resolves the keys to departments (rules below) and returns both ads of every matched department, without duplicates. If nothing matched (no keys, or only unknown keys), returns 2 **different** random ads from the whole catalog. |
 
-Built-in categories: `clothing`, `accessories`, `footwear`, `hair`, `decor`, `kitchen` (two ads). Redirect URLs are relative (`/product/<id>`) and point at products in `product-catalog-db`.
+### Ad catalog
+
+Hard-coded in [`AdsMap.java`](src/main/java/hipstershop/AdsMap.java): **two ads per department**, 14 in total. Every ad's `redirect_url` is a category link `/?category=<department id>` (relative; the frontend is expected to filter its home page by that query parameter).
+
+| Department id | Also reached through (type words / source categories from the catalog seed data) |
+|---|---|
+| `women` | `tops`, `bags`, `womens-dresses`, `womens-shoes`, `womens-bags`, and the shared `clothing`, `footwear` |
+| `men` | `mens-shirts`, `mens-shoes`, and the shared `clothing`, `footwear` |
+| `accessories` | `jewellery`, `watches`, `sunglasses`, `mens-watches`, `womens-watches`, `womens-jewellery` |
+| `beauty` | `fragrances`, `makeup`, `skin-care` |
+| `home` | `decor`, `furniture`, `home-decoration` |
+| `kitchen` | `kitchen-accessories` |
+| `sports` | `sports-accessories` |
+
+Key resolution:
+
+- Keys are trimmed and lower-cased.
+- If at least one key is a department id, **only the department ids** are used. A product's `categories` always starts with its department (e.g. `["men","footwear","mens-shoes"]`), so a men's shoe gets the two `men` ads and not also the `women` ads through the shared word `footwear`.
+- Otherwise every key is resolved through the alias table (`footwear` alone yields the `women` and `men` ads).
+- A cart with items from several departments gets the ads of all of them (the frontend then shows one at random).
+
+The alias list was taken from the distinct `categories` values of the 117 products in `product-catalog-service` `data/seed/products.json` (as of 2026-10-27); `AdsMapTest` checks that each of those values yields an ad. New categories in the catalog need a new alias here, otherwise those products fall back to random ads.
 
 ## Configuration
 
@@ -64,6 +85,7 @@ Multi-stage [`Dockerfile`](Dockerfile):
 - **EXPOSE:** `9555`.
 - **Docker `HEALTHCHECK`:** none (the old one hit the removed `/metrics` endpoint). Kubernetes uses gRPC probes (below).
 - **Image size:** ~107 MB.
+- **`RUN apk upgrade --no-cache`** in the runtime stage pulls Alpine security fixes published after the `eclipse-temurin:21-jre-alpine` base was built (the image scan failed on a fixable HIGH finding in `brotli-libs`). This makes builds non-reproducible over time by design; the scan is the reason it is there.
 - **Build context:** the service root. No `.dockerignore` is present, so `build/`, `.gradle/` and `.git` are sent to the daemon — add one if builds feel slow.
 
 ## Kubernetes deployment notes
@@ -169,10 +191,18 @@ docker run --rm -p 9555:9555 \
 
 No reflection, so the proto is required:
 
+Without a local `grpcurl`, the container image works against a running container (this is how the ad catalog was checked on 2026-10-27: department key, product categories, no key and an unknown key, with no telemetry variables set):
+
 ```bash
-# ads for given categories
+docker run --rm --network container:<ad-service container> -v "$PWD/src/main/proto:/p:ro" \
+  fullstorydev/grpcurl:v1.9.1 -plaintext -import-path /p -proto ad.proto \
+  -d '{"context_keys": ["kitchen"]}' localhost:9555 hipstershop.AdService/GetAds
+```
+
+```bash
+# ads for a product's categories (returns the two `men` ads)
 grpcurl -plaintext -proto src/main/proto/ad.proto \
-  -d '{"context_keys": ["clothing", "kitchen"]}' \
+  -d '{"context_keys": ["men", "footwear", "mens-shoes"]}' \
   localhost:9555 hipstershop.AdService/GetAds
 
 # random ads
@@ -193,7 +223,7 @@ grpcurl -plaintext -import-path ../email-service/proto -proto health.proto \
 │   ├── java/hipstershop/
 │   │   ├── AdService.java       # entrypoint: telemetry bootstrap, gRPC server, metrics HTTP server, shutdown hook
 │   │   ├── AdServiceImpl.java   # GetAds handler (+ metrics recording)
-│   │   ├── AdsMap.java          # hard-coded ad catalog keyed by category
+│   │   ├── AdsMap.java          # hard-coded ad catalog: departments, aliases, category links
 │   │   ├── Metrics.java         # rpc_server_* Micrometer metrics
 │   │   └── Telemetry.java       # OTel tracing + Pyroscope init
 │   ├── proto/ad.proto           # service contract
@@ -207,6 +237,9 @@ grpcurl -plaintext -import-path ../email-service/proto -proto health.proto \
 ## Known limitations
 
 - The ad catalog is compiled in; changing ads means a new image.
-- `getRandom()` samples with replacement, so the two random ads can be identical.
+- The alias table is a copy of the catalog's category words; categories added to the catalog later fall back to random ads until they are added here.
+- The frontend currently asks for ads only on the home page (no keys) and the product page (the product's categories); the cart page does not call the ad service in the frontend code as of 2026-10-27.
+- The `/?category=<id>` links only work once the frontend supports the `category` query parameter (not part of this repo).
+- Ad copy is fictional demo text (discounts and offers are not backed by any pricing logic).
 - With an endpoint set but unreachable, the exporters log errors periodically (set none, or OTEL_SDK_DISABLED=true, to turn telemetry off).
 - Graceful shutdown calls `server.shutdown()` but does not await in-flight RPCs; set a short `terminationGracePeriodSeconds` (10–15 s is plenty).
