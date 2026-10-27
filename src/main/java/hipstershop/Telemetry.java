@@ -20,6 +20,7 @@ import io.pyroscope.javaagent.PyroscopeAgent;
 import io.pyroscope.javaagent.config.Config;
 import java.net.InetAddress;
 import java.time.Duration;
+import java.util.Map;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -42,6 +43,14 @@ final class Telemetry {
      * {@code COLLECTOR_SERVICE_ADDR} (host:port) is a legacy fallback.
      */
     static OpenTelemetrySdk init() {
+        if (!telemetryEnabled(System.getenv())) {
+            // No exporter, no background threads, no connection attempts: the SDK object only exists so the
+            // rest of the service (gRPC interceptor, metrics instruments) can run unchanged.
+            OpenTelemetrySdk disabled = OpenTelemetrySdk.builder().build();
+            OpenTelemetryAppender.install(disabled);
+            logger.info("Telemetry disabled (no OTEL_EXPORTER_OTLP_ENDPOINT, or OTEL_SDK_DISABLED=true / ENABLE_TRACING=0)");
+            return disabled;
+        }
         String serviceName = System.getenv().getOrDefault("OTEL_SERVICE_NAME", "ad-service");
         String serviceVersion = System.getenv().getOrDefault("SERVICE_VERSION", "1.0.0");
         String endpoint = resolveEndpoint();
@@ -92,7 +101,11 @@ final class Telemetry {
      * Starts Pyroscope continuous profiling (CPU profile).
      */
     static void initProfiling() {
-        String pyroscopeAddr = System.getenv().getOrDefault("PYROSCOPE_ADDR", "http://localhost:4040");
+        if (!profilingEnabled(System.getenv())) {
+            logger.info("Profiling disabled (no PYROSCOPE_ADDR, or OTEL_SDK_DISABLED=true / ENABLE_PROFILING=0)");
+            return;
+        }
+        String pyroscopeAddr = System.getenv("PYROSCOPE_ADDR");
         String serviceName   = System.getenv().getOrDefault("OTEL_SERVICE_NAME", "ad-service");
 
         PyroscopeAgent.start(
@@ -106,16 +119,45 @@ final class Telemetry {
         logger.info("Pyroscope profiling initialised → {}", pyroscopeAddr);
     }
 
+    /**
+     * Telemetry is on only when an OTLP endpoint is configured; {@code OTEL_SDK_DISABLED=true} (the
+     * OpenTelemetry standard switch) and the legacy {@code ENABLE_TRACING=0} force it off.
+     */
+    static boolean telemetryEnabled(Map<String, String> env) {
+        if (isTrue(env.get("OTEL_SDK_DISABLED")) || "0".equals(env.get("ENABLE_TRACING"))) {
+            return false;
+        }
+        return resolveEndpoint(env) != null;
+    }
+
+    /** Profiling is on only when {@code PYROSCOPE_ADDR} is set; {@code ENABLE_PROFILING=0} and OTEL_SDK_DISABLED=true force it off. */
+    static boolean profilingEnabled(Map<String, String> env) {
+        if (isTrue(env.get("OTEL_SDK_DISABLED")) || "0".equals(env.get("ENABLE_PROFILING"))) {
+            return false;
+        }
+        String addr = env.get("PYROSCOPE_ADDR");
+        return addr != null && !addr.isBlank();
+    }
+
+    private static boolean isTrue(String v) {
+        return v != null && v.trim().equalsIgnoreCase("true");
+    }
+
     private static String resolveEndpoint() {
-        String endpoint = System.getenv("OTEL_EXPORTER_OTLP_ENDPOINT");
+        return resolveEndpoint(System.getenv());
+    }
+
+    /** The OTLP endpoint, or null when none is configured. */
+    static String resolveEndpoint(Map<String, String> env) {
+        String endpoint = env.get("OTEL_EXPORTER_OTLP_ENDPOINT");
         if (endpoint != null && !endpoint.isBlank()) {
             return endpoint;
         }
-        String legacy = System.getenv("COLLECTOR_SERVICE_ADDR");
+        String legacy = env.get("COLLECTOR_SERVICE_ADDR");
         if (legacy != null && !legacy.isBlank()) {
             return "http://" + legacy;
         }
-        return "http://localhost:4317";
+        return null;
     }
 
     private static String instanceId() {

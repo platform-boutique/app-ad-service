@@ -35,17 +35,20 @@ All configuration is via environment variables. Nothing is required; every varia
 | Variable | Default | Description |
 |---|---|---|
 | `PORT` | `9555` | gRPC listen port |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4317` | OTLP/**gRPC** endpoint for **traces, metrics and logs** (scheme required), e.g. `http://alloy.monitoring.svc.cluster.local:4317`. Legacy fallback: `COLLECTOR_SERVICE_ADDR` (`host:port`) |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | unset (telemetry off) | OTLP/**gRPC** endpoint for **traces, metrics and logs** (scheme required), e.g. `http://alloy.monitoring.svc.cluster.local:4317`. Legacy fallback: `COLLECTOR_SERVICE_ADDR` (`host:port`). Telemetry is on iff an endpoint is set |
+| `OTEL_SDK_DISABLED` | unset | `true` forces all telemetry and profiling off even if endpoints are set (the standard OpenTelemetry switch) |
+| `ENABLE_TRACING` | unset | Legacy switch: `0` forces telemetry off |
+| `ENABLE_PROFILING` | unset | `0` forces profiling off |
 | `OTEL_METRIC_EXPORT_INTERVAL` | `15000` | Milliseconds between metric pushes |
 | `OTEL_SERVICE_NAME` | `ad-service` | `service.name` — becomes the Prometheus `job` and the Loki `service_name`; keep the default, dashboards depend on it |
 | `SERVICE_VERSION` | `1.0.0` | `service.version` resource attribute |
-| `PYROSCOPE_ADDR` | `http://localhost:4040` | Profiles use the Pyroscope SDK push protocol (**not** OTLP). Point it at Alloy (`http://alloy.monitoring.svc.cluster.local:4040`), which forwards to Pyroscope, or directly at Pyroscope |
+| `PYROSCOPE_ADDR` | unset (profiling off) | Profiles use the Pyroscope SDK push protocol (**not** OTLP). Point it at Alloy (`http://alloy.monitoring.svc.cluster.local:4040`), which forwards to Pyroscope, or directly at Pyroscope |
 
 Notes:
 
 - Telemetry is **pushed**, not scraped: traces, metrics and logs share one OTLP/gRPC endpoint (Alloy); profiles go to Pyroscope (via Alloy). `service.instance.id` is the pod hostname, so replicas stay distinct in Mimir.
 - The former Prometheus endpoint (`METRICS_PORT`) no longer exists. Logs keep going to stdout and are additionally exported over OTLP with trace ids.
-- Telemetry and profiling cannot be switched off with a flag; with no reachable collector the exporters just log errors and the service keeps serving.
+- With no endpoint set, telemetry and profiling are off: no exporters, no background connections, no error logs (verified by starting the image with none of these variables set and reading its log). With an endpoint that is not reachable the exporters still log errors and the service keeps serving.
 
 ## Container image
 
@@ -205,5 +208,5 @@ grpcurl -plaintext -import-path ../email-service/proto -proto health.proto \
 
 - The ad catalog is compiled in; changing ads means a new image.
 - `getRandom()` samples with replacement, so the two random ads can be identical.
-- Telemetry/profiling are always on (no kill switch); point the endpoints at something reachable or expect periodic exporter error logs.
+- With an endpoint set but unreachable, the exporters log errors periodically (set none, or OTEL_SDK_DISABLED=true, to turn telemetry off).
 - Graceful shutdown calls `server.shutdown()` but does not await in-flight RPCs; set a short `terminationGracePeriodSeconds` (10–15 s is plenty).
