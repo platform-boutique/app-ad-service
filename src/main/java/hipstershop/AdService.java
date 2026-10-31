@@ -15,6 +15,7 @@ import org.apache.logging.log4j.Logger;
  *
  * <p>Responsibilities:
  * <ul>
+ *   <li>Load and validate the ad config ({@code ADS_CONFIG} or the bundled {@code ads.json}); exit 1 if invalid
  *   <li>Bootstrap observability (traces, metrics, logs over OTLP/gRPC; profiling)
  *   <li>Start the gRPC server with OTel interceptor
  *   <li>Register health status
@@ -25,6 +26,18 @@ public final class AdService {
     private static final Logger logger = LogManager.getLogger(AdService.class);
 
     public static void main(String[] args) throws IOException, InterruptedException {
+        // --- Ad configuration: a bad config must stop the process before anything is served ---
+        AdCatalog catalog;
+        try {
+            catalog = AdCatalog.load(System.getenv("ADS_CONFIG"));
+        } catch (AdConfigException e) {
+            logger.fatal("Invalid ad configuration, refusing to start: {}", e.getMessage());
+            System.err.println("ad-service: invalid ad configuration, refusing to start: " + e.getMessage());
+            System.exit(1);
+            return;
+        }
+        logger.info("Loaded {} ads from {}", catalog.ads().size(), configSource());
+
         // --- Observability bootstrap ---
         OpenTelemetrySdk otelSdk = Telemetry.init();
         Telemetry.initProfiling();
@@ -37,7 +50,7 @@ public final class AdService {
         HealthStatusManager healthMgr = new HealthStatusManager();
 
         Server server = ServerBuilder.forPort(port)
-            .addService(new AdServiceImpl(metrics))
+            .addService(new AdServiceImpl(metrics, catalog))
             .addService(healthMgr.getHealthService())
             .intercept(grpcTelemetry.newServerInterceptor())
             .build()
@@ -55,5 +68,10 @@ public final class AdService {
         }));
 
         server.awaitTermination();
+    }
+
+    private static String configSource() {
+        String path = System.getenv("ADS_CONFIG");
+        return path == null || path.isBlank() ? "the bundled ads.json" : "ADS_CONFIG=" + path;
     }
 }

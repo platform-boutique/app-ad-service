@@ -26,9 +26,13 @@ final class Metrics {
     private static final AttributeKey<String> RPC_METHOD_KEY  = AttributeKey.stringKey("rpc_method");
     private static final AttributeKey<String> RPC_STATUS_KEY  = AttributeKey.stringKey("rpc_grpc_status_code");
 
+    private static final AttributeKey<String> AD_ID_KEY = AttributeKey.stringKey("ad_id");
+
     private final DoubleHistogram duration;
     private final LongCounter requests;
     private final LongUpDownCounter active;
+    private final LongCounter impressions;
+    private final LongCounter clicks;
 
     Metrics(OpenTelemetry openTelemetry) {
         Meter meter = openTelemetry.getMeter("ad-service-grpc");
@@ -46,6 +50,21 @@ final class Metrics {
         active = meter.upDownCounterBuilder("rpc_server_active_requests")
             .setDescription("Number of in-flight gRPC calls")
             .build();
+        // Exposed in Prometheus as ads_impressions_total / ads_clicks_total{ad_id}
+        impressions = meter.counterBuilder("ads_impressions_total")
+            .setDescription("Ads returned by GetAds, per ad id")
+            .build();
+        clicks = meter.counterBuilder("ads_clicks_total")
+            .setDescription("Clicks recorded by RecordClick, per ad id")
+            .build();
+    }
+
+    void recordImpression(String adId) {
+        impressions.add(1, Attributes.of(AD_ID_KEY, adId));
+    }
+
+    void recordClick(String adId) {
+        clicks.add(1, Attributes.of(AD_ID_KEY, adId));
     }
 
     void incrementActive(String method) {
