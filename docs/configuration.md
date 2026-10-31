@@ -5,6 +5,7 @@ All configuration is via environment variables. Nothing is required; every varia
 | Variable | Default | Description |
 |---|---|---|
 | `PORT` | `9555` | gRPC listen port |
+| `ADS_CONFIG` | unset (bundled `ads.json`) | Path of a JSON ad config that replaces the bundled one (schema in the README). Invalid or unreadable: the process exits 1 at start |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4317` | OTLP/**gRPC** endpoint for **traces, metrics and logs** (scheme required), e.g. `http://alloy.monitoring.svc.cluster.local:4317`. Legacy fallback: `COLLECTOR_SERVICE_ADDR` (`host:port`) |
 | `OTEL_METRIC_EXPORT_INTERVAL` | `15000` | Milliseconds between metric pushes |
 | `OTEL_SERVICE_NAME` | `ad-service` | `service.name` — becomes the Prometheus `job` and the Loki `service_name`; keep the default, dashboards depend on it |
