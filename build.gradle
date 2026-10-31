@@ -67,7 +67,8 @@ dependencies {
     implementation "org.apache.logging.log4j:log4j-layout-template-json:2.25.0"
 
     runtimeOnly "io.netty:netty-tcnative-boringssl-static:2.0.75.Final"
-    runtimeOnly "com.fasterxml.jackson.core:jackson-databind:2.21.7"
+    // already shipped at runtime (OTLP exporter); now also compiled against to parse the ad config
+    implementation "com.fasterxml.jackson.core:jackson-databind:2.21.7"
 
     // Testing
     testImplementation "org.junit.jupiter:junit-jupiter:5.11.4"
