@@ -51,6 +51,17 @@ final class Metrics {
             .setDescription("Number of in-flight gRPC calls")
             .build();
         // Exposed in Prometheus as ads_impressions_total / ads_clicks_total{ad_id}
+        // build_info{service,version,commit} = 1 (CODE-06), delivered over OTLP like the other metrics
+        java.util.Map<String, String> env = System.getenv();
+        Attributes build = Attributes.builder()
+            .put("service", LogConfig.serviceName(env))
+            .put("version", BuildInfo.version(env))
+            .put("commit", BuildInfo.commit(env))
+            .build();
+        meter.gaugeBuilder("build_info")
+            .setDescription("Build information of the running service, always 1")
+            .ofLongs()
+            .buildWithCallback(m -> m.record(1, build));
         impressions = meter.counterBuilder("ads_impressions_total")
             .setDescription("Ads returned by GetAds, per ad id")
             .build();

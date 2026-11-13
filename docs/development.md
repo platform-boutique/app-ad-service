@@ -52,7 +52,7 @@ grpcurl -plaintext -import-path ../email-service/proto -proto health.proto \
 │   │   ├── Metrics.java         # rpc_server_* Micrometer metrics
 │   │   └── Telemetry.java       # OTel tracing + Pyroscope init
 │   ├── proto/ad.proto           # service contract
-│   └── resources/log4j2.xml     # ECS JSON logging
+│   └── resources/log4j2.xml     # appenders and levels (+ LogShape.json: the JSON log shape)
 ├── build.gradle                 # gRPC 1.79, OTel 1.49, Micrometer, Pyroscope agent, pinned Netty
 ├── settings.gradle
 ├── gradlew / gradle/

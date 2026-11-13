@@ -94,20 +94,23 @@ All configuration is via environment variables. Nothing is required; every varia
 |---|---|---|
 | `PORT` | `9555` | gRPC listen port |
 | `ADS_CONFIG` | unset (bundled `ads.json`) | Path of a JSON ad config that replaces the bundled one (schema above). Invalid or unreadable = the process exits 1 at start |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | unset (telemetry off) | OTLP/**gRPC** endpoint for **traces, metrics and logs** (scheme required), e.g. `http://alloy.monitoring.svc.cluster.local:4317`. Legacy fallback: `COLLECTOR_SERVICE_ADDR` (`host:port`). Telemetry is on iff an endpoint is set |
-| `OTEL_SDK_DISABLED` | unset | `true` forces all telemetry and profiling off even if endpoints are set (the standard OpenTelemetry switch) |
-| `ENABLE_TRACING` | unset | Legacy switch: `0` forces telemetry off |
-| `ENABLE_PROFILING` | unset | `0` forces profiling off |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | unset (telemetry off) | OTLP/**gRPC** endpoint for **traces, metrics and logs**: an absolute http(s) URL, e.g. `http://alloy.monitoring.svc.cluster.local:4317`. Telemetry is on iff this is a valid URL; empty or malformed (`alloy:4317`, `ftp://...`) means off with one warning, never a crash. The legacy `COLLECTOR_SERVICE_ADDR` is **removed** |
+| `OTEL_SDK_DISABLED` | unset | `true` (trimmed, case-insensitive) forces all telemetry and profiling off even if endpoints are set |
+| `ENABLE_PROFILING` | unset | `0` forces profiling off; `1` alone starts nothing (profiling needs `PYROSCOPE_ADDR`). The legacy `ENABLE_TRACING` is **removed** (the compose files still set it; it is ignored here) |
 | `OTEL_METRIC_EXPORT_INTERVAL` | `15000` | Milliseconds between metric pushes |
-| `OTEL_SERVICE_NAME` | `ad-service` | `service.name` — becomes the Prometheus `job` and the Loki `service_name`; keep the default, dashboards depend on it |
-| `SERVICE_VERSION` | `1.0.0` | `service.version` resource attribute |
-| `PYROSCOPE_ADDR` | unset (profiling off) | Profiles use the Pyroscope SDK push protocol (**not** OTLP). Point it at Alloy (`http://alloy.monitoring.svc.cluster.local:4040`), which forwards to Pyroscope, or directly at Pyroscope |
+| `OTEL_SERVICE_NAME` | `ad-service` | `service.name`, the `service` log field and the Pyroscope `service_name`; becomes the Prometheus `job` and the Loki `service_name`; keep the default, dashboards depend on it |
+| `SERVICE_VERSION` | jar manifest `Implementation-Version` (build property `-PappVersion`, default `dev`) | `service.version`, the `version` log field, the `build_info` metric and the Pyroscope `version` tag |
+| `GIT_COMMIT` | `unknown` | `commit` in the `starting` log line and in the `build_info` metric (nothing sets it yet: the Dockerfile is owned by another task) |
+| `DEPLOYMENT_ENVIRONMENT` | `local` | `deployment.environment` resource attribute and the Pyroscope `environment` tag |
+| `LOG_LEVEL` | `info` | `trace`, `debug`, `info`, `warn`/`warning`, `error`, `fatal`; anything else = `info` |
+| `OTEL_EXPORTER_OTLP_PROTOCOL`, `OTEL_RESOURCE_ATTRIBUTES`, `OTEL_TRACES_SAMPLER`(`_ARG`) | not read | OTLP/gRPC and parent-based always-on sampling are fixed in `Telemetry.java`; `service.namespace` is always `everly` |
+| `PYROSCOPE_ADDR` | unset (profiling off) | Profiles use the Pyroscope SDK push protocol (**not** OTLP). Point it at Alloy (`http://alloy.monitoring.svc.cluster.local:4040`), which forwards to Pyroscope, or directly at Pyroscope. There is no default address |
 
 Notes:
 
 - Telemetry is **pushed**, not scraped: traces, metrics and logs share one OTLP/gRPC endpoint (Alloy); profiles go to Pyroscope (via Alloy). `service.instance.id` is the pod hostname, so replicas stay distinct in Mimir.
-- The former Prometheus endpoint (`METRICS_PORT`) no longer exists. Logs keep going to stdout and are additionally exported over OTLP with trace ids.
-- With no endpoint set, telemetry and profiling are off: no exporters, no background connections, no error logs (verified by starting the image with none of these variables set and reading its log). With an endpoint that is not reachable the exporters still log errors and the service keeps serving.
+- The former Prometheus endpoint (`METRICS_PORT`) no longer exists. Logs go to stdout as JSON (shape below) and are additionally exported over OTLP with trace ids.
+- With no (or an invalid) endpoint, telemetry is off: no exporters, no background connections. With an endpoint that is not reachable the service still starts and serves; exporters are asynchronous with bounded queues (2048 records, dropped when full) and a 3 s deadline per export, export errors appear as (throttled) JSON lines. On SIGTERM the server gets 3 s to finish in-flight calls, telemetry up to 5 s to flush.
 
 ## Container image
 
@@ -196,14 +199,26 @@ and was verified under the `restricted` Pod Security Standard on the earlier loc
 |---|---|---|
 | **Traces** | OpenTelemetry SDK, OTLP/gRPC span exporter (`BatchSpanProcessor`); inbound spans from the `opentelemetry-grpc-1.6` server interceptor; W3C `traceparent` propagation; parent-based always-on sampling | `OTEL_EXPORTER_OTLP_ENDPOINT` → Alloy → Tempo |
 | **Metrics** | OTel SDK instruments in `Metrics.java`, pushed by a `PeriodicMetricReader` over OTLP/gRPC every 15 s (replaces the old Micrometer/Prometheus endpoint) | Alloy → Mimir |
-| **Logs** | Log4j2: ECS JSON to stdout **and** the OpenTelemetry appender (OTLP/gRPC, with `trace_id`/`span_id`) | Alloy → Loki |
-| **Profiles** | Pyroscope Java agent (`ITIMER`), pushed to `PYROSCOPE_ADDR` | Alloy `:4040` → Pyroscope |
+| **Logs** | Log4j2 `JsonTemplateLayout` (`LogShape.json`): the standard Everly JSON shape to stdout **and** the OpenTelemetry appender (OTLP/gRPC, with `trace_id`/`span_id`) | Alloy -> Loki (Alloy also reads container stdout) |
+| **Profiles** | Pyroscope Java agent (`ITIMER`), pushed to `PYROSCOPE_ADDR`; tags `service_name`, `version`, `environment` | Alloy `:4040` → Pyroscope |
 
 Metric names: `rpc_server_duration_seconds_{bucket,count,sum}` (explicit buckets 1 ms … 10 s), `rpc_server_requests_total`, `rpc_server_active_requests`, labelled `rpc_system`, `rpc_service`, `rpc_method`, `rpc_grpc_status_code`. The gRPC instrumentation library additionally emits `rpc_server_duration_milliseconds_*` (unused by the dashboard).
 
 Ad counters (OTel counters, `ad_id` attribute): `ads_impressions_total` (one per ad returned by `GetAds`) and `ads_clicks_total` (one per successful `RecordClick`). They are updated next to the in-memory counters; the export to a collector was not run (the tests use a no-op SDK), only the in-process counters and RPCs were verified. `RecordClick` and `GetAdStats` also appear in the `rpc_server_*` metrics with their `rpc_method`.
 
 Every series carries `job="ad-service"` (from `service.name`) and `instance=<pod name>` (`service.instance.id`), which is what the Grafana dashboards select on. Logs land in Loki with `service_name="ad-service"` and trace/span ids, so a log line links to its trace.
+
+**Log shape (OBS-30).** One JSON object per line on stdout, nothing else on stdout/stderr (the OpenTelemetry SDK's `java.util.logging` output is bridged into the same shape):
+
+```json
+{"timestamp":"2026-11-13T16:55:46.596Z","severity":"info","message":"Served 2 ads for context_keys=[women]","service":"ad-service","version":"dev","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","span_id":"00f067aa0ba902b7"}
+```
+
+`timestamp` RFC3339 UTC (milliseconds), `severity` lower case (`debug`, `info`, `warning`, `error`, `fatal`), `message`, `service`, `version`; `trace_id` / `span_id` only while a span is active (the `opentelemetry-log4j-context-data` provider copies them from the current span into the Log4j thread context; the gRPC server interceptor makes the span current for the handlers); `error` (the exception message, no stack trace) on `logger.error(msg, throwable)`; `commit` on the `starting` line (which also carries `version`). The service has no request id. Nothing personal is logged: the lines carry ad ids, context keys (department/category words) and counts. Uncaught exceptions and an invalid ad config are logged through the same layout (`fatal`). `LogShapeTest` pins the shape against the real `log4j2.xml`.
+
+**Metrics** are pushed over OTLP, there is no scrape endpoint (documented exception to the port-9090 rule: the Java service delivers its RED series over OTLP). `build_info{service,version,commit}` is a gauge with value 1.
+
+**Profiling** is on only with `PYROSCOPE_ADDR`.
 
 The Pyroscope agent extracts a native library into `/tmp` and loads it, so `/tmp` must be writable **and executable** (an `emptyDir` is; a `noexec` tmpfs is not).
 
@@ -274,6 +289,12 @@ Run on 2026-11-01 (branch `feat/ads-config-clicks`):
 - `docker build -t ad-service:local .` succeeded. A container on a throwaway network, called with `grpcurl` (`-proto`, no reflection): `GetAds` with a department key, a search word and `footwear` twice (different pairs), with no keys; `RecordClick` for a known id (OK) and an unknown id (`NotFound`); `GetAdStats` showing the impressions and the click. With `ADS_CONFIG` pointing at a one-ad file the container served only that ad; with a duplicate-id file and a missing file it exited 1 with the message above. `docker stop` ran the shutdown hook (log line `Shutting down AdService...`, exit 143). The container started with no telemetry variables logged "Telemetry disabled" and "Profiling disabled".
 - Not run: the `ads_*_total` export to a real collector, a Kubernetes deployment, the CI pipeline.
 
+### Observability step 3 (2026-11-13, branch `feat/observability-step3`)
+
+- `./gradlew test --no-daemon` in `eclipse-temurin:21-jdk-alpine` (+ `libc6-compat`, `--memory 768m`): all tests pass (226 tests, 0 failures; the last run). New: env matrix for telemetry and profiling (`TelemetryTest`), resource attributes, Pyroscope labels, a blackholed collector (TCP socket that never answers: startup < 5 s, shutdown < 9 s asserted, about 5 s measured), log shape incl. trace ids inside and outside a span (`LogShapeTest`), level and version resolution (`LogConfigTest`).
+- `installDist` and the start script run in the same container: with `OTEL_EXPORTER_OTLP_ENDPOINT=http://192.0.2.1:4317` (blackhole) SIGTERM ended the process in 4 s (exit 143); an empty endpoint starts with telemetry off and JSON lines only.
+- Not run: the Docker image build, the compose stack, export to a real Alloy/Tempo/Loki, Pyroscope profiles with the new tags.
+
 ## Project structure
 
 ```
@@ -285,12 +306,15 @@ Run on 2026-11-01 (branch `feat/ads-config-clicks`):
 │   │   ├── AdConfigException.java
 │   │   ├── AdStats.java         # thread-safe in-memory impression/click counters
 │   │   ├── AdsMap.java          # static access to the bundled default catalog (tests, one-arg AdServiceImpl)
-│   │   ├── Metrics.java         # rpc_server_* and ads_*_total OTel metrics
-│   │   └── Telemetry.java       # OTel tracing + Pyroscope init
+│   │   ├── Metrics.java         # rpc_server_*, ads_*_total and build_info OTel metrics
+│   │   ├── Telemetry.java       # OTel SDK + Pyroscope init, env contract, bounded shutdown
+│   │   ├── LogConfig.java       # LOG_LEVEL / service name / version for log4j2.xml, java.util.logging bridge
+│   │   └── BuildInfo.java       # version (SERVICE_VERSION, manifest, dev) and commit
 │   ├── proto/ad.proto           # service contract
 │   └── resources/
 │       ├── ads.json             # bundled default ad config
-│       └── log4j2.xml           # ECS JSON logging
+│       ├── log4j2.xml           # appenders, levels
+│       └── LogShape.json        # the JSON log shape
 ├── build.gradle                 # gRPC 1.79, OTel 1.49, Micrometer, Pyroscope agent, pinned Netty
 ├── settings.gradle
 ├── gradlew / gradle/
@@ -307,4 +331,5 @@ Run on 2026-11-01 (branch `feat/ads-config-clicks`):
 - The `/?category=<id>` links only work once the frontend supports the `category` query parameter (not part of this repo).
 - Ad copy promises nothing the shop does not do (owner decision 2026-11-13): no prices, discounts, free shipping/returns or gift wrap, because the shop has no such logic (shipping is a flat per-zone tariff shown in the cart). The copy only names product groups that exist in the catalog seed. `AdsMapTest.bundledCopy_makesNoOffers` fails if a price, percentage, "free", "off", "for 2" or "gift wrap" wording comes back.
 - With an endpoint set but unreachable, the exporters log errors periodically (set none, or OTEL_SDK_DISABLED=true, to turn telemetry off).
-- Graceful shutdown calls `server.shutdown()` but does not await in-flight RPCs; set a short `terminationGracePeriodSeconds` (10–15 s is plenty).
+- Graceful shutdown: `server.shutdown()`, then up to 3 s for in-flight RPCs (then `shutdownNow()`), then up to 5 s to flush telemetry; `terminationGracePeriodSeconds` of 10-15 s is plenty.
+- The Pyroscope agent is not stopped on SIGTERM, so the last seconds of CPU samples are dropped.

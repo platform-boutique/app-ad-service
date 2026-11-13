@@ -7,6 +7,9 @@ import io.grpc.services.HealthStatusManager;
 import io.opentelemetry.instrumentation.grpc.v1_6.GrpcTelemetry;
 import io.opentelemetry.sdk.OpenTelemetrySdk;
 import java.io.IOException;
+import java.time.Duration;
+import java.util.concurrent.TimeUnit;
+import org.apache.logging.log4j.CloseableThreadContext;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -23,16 +26,28 @@ import org.apache.logging.log4j.Logger;
  */
 public final class AdService {
 
+    // Must stay above the logger field: static initialisers run in textual order and the Log4j configuration
+    // reads the level, service name and version from these system properties when the first logger is created.
+    static {
+        LogConfig.init();
+    }
+
     private static final Logger logger = LogManager.getLogger(AdService.class);
 
     public static void main(String[] args) throws IOException, InterruptedException {
+        // Anything that escapes main (or a thread) is logged as one JSON line, not a bare stack trace on stderr.
+        Thread.setDefaultUncaughtExceptionHandler((t, e) ->
+            logger.fatal("uncaught exception in thread {}", t.getName(), e));
+        try (CloseableThreadContext.Instance ignored = CloseableThreadContext.put("commit", BuildInfo.commit(System.getenv()))) {
+            logger.info("starting");
+        }
+
         // --- Ad configuration: a bad config must stop the process before anything is served ---
         AdCatalog catalog;
         try {
             catalog = AdCatalog.load(System.getenv("ADS_CONFIG"));
         } catch (AdConfigException e) {
             logger.fatal("Invalid ad configuration, refusing to start: {}", e.getMessage());
-            System.err.println("ad-service: invalid ad configuration, refusing to start: " + e.getMessage());
             System.exit(1);
             return;
         }
@@ -64,7 +79,16 @@ public final class AdService {
             logger.info("Shutting down AdService...");
             healthMgr.clearStatus("");
             server.shutdown();
-            otelSdk.close();
+            try {
+                // in-flight calls get 3 s, then the server is cut; telemetry gets at most 5 s: well inside 10 s
+                if (!server.awaitTermination(3, TimeUnit.SECONDS)) {
+                    server.shutdownNow();
+                }
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                server.shutdownNow();
+            }
+            Telemetry.shutdown(otelSdk, Duration.ofSeconds(5));
         }));
 
         server.awaitTermination();
