@@ -38,14 +38,14 @@ The ads are a JSON array. The bundled default is [`src/main/resources/ads.json`]
 [
   {
     "id": "women-1",
-    "text": "New season dresses and tops at Everly. Fresh colours, easy fits, 20% off this week.",
+    "text": "Dresses and tops at Everly. Browse the women's collection.",
     "redirect_url": "/?category=women",
     "departments": ["women"],
     "keywords": ["clothing", "footwear", "tops"]
   },
   {
     "id": "search-dresses",
-    "text": "Dress up: new-season dresses and skirts at Everly, free returns on every order.",
+    "text": "Dress up: dresses, gowns and skirts at Everly.",
     "redirect_url": "/?category=women",
     "keywords": ["dress", "dresses", "skirt"]
   }
@@ -305,6 +305,6 @@ Run on 2026-11-01 (branch `feat/ads-config-clicks`):
 - The keywords of the bundled ads are a copy of the catalog's category words; categories added to the catalog later fall back to random ads until they are added to the config.
 - The callers (frontend, load generator) are changed in their own repositories; this repo only provides the server side. The proto change is additive, so old callers keep working.
 - The `/?category=<id>` links only work once the frontend supports the `category` query parameter (not part of this repo).
-- Ad copy is fictional demo text (discounts and offers are not backed by any pricing logic).
+- Ad copy promises nothing the shop does not do (owner decision 2026-11-13): no prices, discounts, free shipping/returns or gift wrap, because the shop has no such logic (shipping is a flat per-zone tariff shown in the cart). The copy only names product groups that exist in the catalog seed. `AdsMapTest.bundledCopy_makesNoOffers` fails if a price, percentage, "free", "off", "for 2" or "gift wrap" wording comes back.
 - With an endpoint set but unreachable, the exporters log errors periodically (set none, or OTEL_SDK_DISABLED=true, to turn telemetry off).
 - Graceful shutdown calls `server.shutdown()` but does not await in-flight RPCs; set a short `terminationGracePeriodSeconds` (10–15 s is plenty).

@@ -113,4 +113,18 @@ class AdsMapTest {
             assertFalse(ad.getText().isBlank());
         }
     }
+
+    /** The shop has no discounts, free shipping/returns or gift wrap: the copy must not promise them. */
+    @Test
+    void bundledCopy_makesNoOffers() {
+        java.util.regex.Pattern offer = java.util.regex.Pattern.compile(
+            "[%$\\u20ac\\u00a3]|\\d|\\bfree\\b|\\boff\\b|\\bsave\\b|\\bsale\\b|\\bdeal|\\bdiscount|\\bfor 2\\b|gift.?wrap|\\breturns?\\b|\\bbuy\\b|\\bprices?\\b",
+            java.util.regex.Pattern.CASE_INSENSITIVE);
+        int checked = 0;
+        for (Ad ad : AdsMap.bundled().ads()) {
+            assertFalse(offer.matcher(ad.getText()).find(), ad.getId() + " promises an offer: " + ad.getText());
+            checked++;
+        }
+        assertEquals(17, checked);
+    }
 }
