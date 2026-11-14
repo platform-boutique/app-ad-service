@@ -12,7 +12,7 @@ All configuration is via environment variables. Nothing is required; every varia
 | `OTEL_METRIC_EXPORT_INTERVAL` | `15000` | Milliseconds between metric pushes |
 | `OTEL_SERVICE_NAME` | `ad-service` | `service.name`, the `service` log field and the Pyroscope `service_name`; becomes the Prometheus `job` and the Loki `service_name`; keep the default, dashboards depend on it |
 | `SERVICE_VERSION` | jar manifest `Implementation-Version` (build property `-PappVersion`, default `dev`) | `service.version`, the `version` log field, the `build_info` metric and the Pyroscope `version` tag |
-| `GIT_COMMIT` | `unknown` | `commit` in the `starting` log line and in the `build_info` metric  |
+| `SERVICE_COMMIT` | `unknown` | `commit` in the `starting` log line and in the `build_info` metric  |
 | `DEPLOYMENT_ENVIRONMENT` | `local` | `deployment.environment` resource attribute and the Pyroscope `environment` tag |
 | `LOG_LEVEL` | `info` | `trace`, `debug`, `info`, `warn`/`warning`, `error`, `fatal`; anything else = `info` |
 | `OTEL_EXPORTER_OTLP_PROTOCOL`, `OTEL_RESOURCE_ATTRIBUTES`, `OTEL_TRACES_SAMPLER`(`_ARG`) | not read | OTLP/gRPC and parent-based always-on sampling are fixed in `Telemetry.java`; `service.namespace` is always `everly` |

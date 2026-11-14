@@ -35,7 +35,7 @@ class LogConfigTest {
 
     @Test
     void commit_fromGitCommitElseUnknown() {
-        assertEquals("abc1234", BuildInfo.commit(Map.of("GIT_COMMIT", "abc1234")));
+        assertEquals("abc1234", BuildInfo.commit(Map.of("SERVICE_COMMIT", "abc1234")));
         assertEquals("unknown", BuildInfo.commit(Map.of()));
     }
 }

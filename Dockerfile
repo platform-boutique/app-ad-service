@@ -30,7 +30,7 @@ LABEL org.opencontainers.image.title="ad-service" \
       org.opencontainers.image.version="${SERVICE_VERSION}" \
       org.opencontainers.image.licenses="Apache-2.0"
 
-# SERVICE_VERSION is read by the app at run time. The commit is read from GIT_COMMIT today (BuildInfo.java), not SERVICE_COMMIT.
+# SERVICE_VERSION and SERVICE_COMMIT are read by the app at run time (BuildInfo.java).
 ENV SERVICE_VERSION=${SERVICE_VERSION} \
     SERVICE_COMMIT=${SERVICE_COMMIT}
 

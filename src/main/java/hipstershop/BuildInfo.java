@@ -23,9 +23,9 @@ final class BuildInfo {
         return "dev";
     }
 
-    /** {@code GIT_COMMIT} (set by the image build when it passes it), else {@code unknown}. */
+    /** {@code SERVICE_COMMIT} (set by the image build when it passes it), else {@code unknown}. */
     static String commit(Map<String, String> env) {
-        String v = env.get("GIT_COMMIT");
+        String v = env.get("SERVICE_COMMIT");
         return v == null || v.isBlank() ? "unknown" : v.trim();
     }
 }
