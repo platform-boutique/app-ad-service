@@ -1,20 +1,30 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!--
+  One log shape for all Everly services (APPLICATION-STANDARDS OBS-30): one JSON object per line on stdout with
+  timestamp (RFC3339 UTC, ms), severity (lower case), message, service, version, error (on exceptions) and
+  trace_id / span_id (only while a span is active; put into the thread context by the OpenTelemetry
+  context-data provider). The sys properties below are set by LogConfig.init() before the first logger exists.
+-->
 <Configuration status="WARN">
   <Appenders>
     <Console name="STDOUT" target="SYSTEM_OUT">
-      <JsonTemplateLayout eventTemplateUri="classpath:EcsLayout.json">
-        <EventTemplateAdditionalField key="severity" format="JSON" value='{"$resolver": "level", "field": "name"}'/>
-        <EventTemplateAdditionalField key="name"     format="JSON" value='{"$resolver": "logger", "field": "name"}'/>
+      <JsonTemplateLayout eventTemplateUri="classpath:LogShape.json">
+        <EventTemplateAdditionalField key="service" value="${sys:ad.service.name:-ad-service}"/>
+        <EventTemplateAdditionalField key="version" value="${sys:ad.service.version:-dev}"/>
       </JsonTemplateLayout>
     </Console>
     <!-- Mirrors every record to the OTel logs pipeline (OTLP/gRPC) with trace/span ids -->
     <OpenTelemetry name="OpenTelemetryAppender"/>
   </Appenders>
   <Loggers>
+    <!-- the SDK's own exporter errors go to stdout only: through the OTLP appender a dead collector would feed itself -->
+    <Logger name="io.opentelemetry" level="INFO" additivity="false">
+      <AppenderRef ref="STDOUT"/>
+    </Logger>
     <Logger name="io.grpc.netty" level="INFO"/>
     <Logger name="io.netty"      level="INFO"/>
     <Logger name="sun.net"       level="INFO"/>
-    <Root level="INFO">
+    <Root level="${sys:ad.log.level:-info}">
       <AppenderRef ref="STDOUT"/>
       <AppenderRef ref="OpenTelemetryAppender"/>
     </Root>

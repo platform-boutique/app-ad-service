@@ -1,0 +1,31 @@
+build/
+.gradle/
+
+# Environment files, key material
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Java / IDE
+*.class
+*.log
+.idea/
+*.iml
+.vscode/
+out/
+
+# TechDocs build output
+/site/
+.venv/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Agent / session notes: never committed
+STATUS.md
+NOTES*.md
+PLAN.md
+.claude/

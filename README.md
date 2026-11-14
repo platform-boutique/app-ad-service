@@ -1,6 +1,6 @@
 # ad-service
 
-A gRPC service that serves contextual advertisements for the platform-demo e-commerce platform. It returns ads keyed by product category, falling back to random ads when no context is given or nothing matches. It is stateless, has no downstream dependencies, and is called only by `frontend`.
+A gRPC service that serves contextual advertisements for the platform-demo e-commerce platform (demo store brand: Everly). It returns ads read from a JSON config, matched against the department ids, product categories and search words the frontend sends (at most two per call, rotating), falling back to two random ads when no context is given or nothing matches. It also counts impressions and clicks per ad. It has no downstream dependencies and is called only by `frontend`.
 
 Part of the [platform-demo](https://github.com/platform-boutique) platform — microservices, observability (LGTM stack), GitOps (Argo CD), policy enforcement (Kyverno), infrastructure provisioning (Crossplane) and an internal developer portal (Backstage). See the master `README.md` in the platform-demo root for the whole-system view.
 
@@ -13,20 +13,78 @@ Part of the [platform-demo](https://github.com/platform-boutique) platform — m
 | **Protocol / port** | gRPC (HTTP/2, plaintext) on `9555` |
 | **Metrics** | Pushed over OTLP/gRPC to Alloy → Mimir every 15 s (no scrape endpoint). Dashboard names: `rpc_server_duration_seconds_{bucket,count,sum}`, `rpc_server_requests_total`, `rpc_server_active_requests` |
 | **Health** | Standard `grpc.health.v1.Health/Check` on `9555` (always `SERVING` once the server has started) |
-| **State** | None. Ad catalog is hard-coded in `AdsMap.java` |
+| **State** | Ads come from a JSON config (bundled `ads.json` or the file named by `ADS_CONFIG`). Impression/click counters live in memory, per process |
 | **Depends on** | Nothing (optional: OTLP collector, Pyroscope) |
 | **Called by** | `frontend` (with a 100 ms client-side deadline) |
 | **gRPC reflection** | Not enabled — pass `-proto` to `grpcurl` |
 
 ## API
 
-Package `hipstershop`, service `AdService` ([`src/main/proto/ad.proto`](src/main/proto/ad.proto)).
+Package `hipstershop`, service `AdService` ([`src/main/proto/ad.proto`](src/main/proto/ad.proto)). All changes to the proto are additive; callers that send no keys and ignore the new fields behave as before.
 
 | Method | Request | Response | Behaviour |
 |---|---|---|---|
-| `GetAds` | `AdRequest{ repeated string context_keys }` | `AdResponse{ repeated Ad ads }` (`Ad{ redirect_url, text }`) | For every context key, returns **all** ads registered for that category. If the result is empty (no keys, or no category matched), returns 2 random ads (may contain the same ad twice). |
+| `GetAds` | `AdRequest{ repeated string context_keys }` | `AdResponse{ repeated Ad ads }` (`Ad{ redirect_url, text, id }`) | Matches the keys against the configured ads (rules below) and returns **up to 2** of them, rotating so successive calls show different ads. If nothing matched (no keys, or only unknown keys), returns 2 **different** random ads from the whole catalog. Every returned ad counts as one impression. |
+| `RecordClick` | `RecordClickRequest{ string ad_id }` | `RecordClickResponse{}` | Counts one click on the ad. `NOT_FOUND` for an id that is not in the config, `INVALID_ARGUMENT` for an empty id. |
+| `GetAdStats` | `GetAdStatsRequest{}` | `GetAdStatsResponse{ repeated AdStat stats }` (`AdStat{ ad_id, impressions, clicks }`) | One entry per configured ad, in config order, including ads with zero counts. |
 
-Built-in categories: `clothing`, `accessories`, `footwear`, `hair`, `decor`, `kitchen` (two ads). Redirect URLs are relative (`/product/<id>`) and point at products in `product-catalog-db`.
+`Ad.id` (field 3) is new; it is what `RecordClick` takes. The counters are **per process, in memory**: they restart from zero with the process and are not shared between replicas (see Known limitations). They are also exported as the metrics `ads_impressions_total{ad_id}` and `ads_clicks_total{ad_id}` (OTLP, same pipeline as the `rpc_server_*` metrics).
+
+### Ad config
+
+The ads are a JSON array. The bundled default is [`src/main/resources/ads.json`](src/main/resources/ads.json); set `ADS_CONFIG` to the path of a file to use that file **instead** (not merged).
+
+```json
+[
+  {
+    "id": "women-1",
+    "text": "Dresses and tops at Everly. Browse the women's collection.",
+    "redirect_url": "/?category=women",
+    "departments": ["women"],
+    "keywords": ["clothing", "footwear", "tops"]
+  },
+  {
+    "id": "search-dresses",
+    "text": "Dress up: dresses, gowns and skirts at Everly.",
+    "redirect_url": "/?category=women",
+    "keywords": ["dress", "dresses", "skirt"]
+  }
+]
+```
+
+| Field | Required | Rules |
+|---|---|---|
+| `id` | yes | unique in the file; lower-case letters, digits, `.`, `_`, `-` (starts with a letter or digit) |
+| `text` | yes | non-blank string |
+| `redirect_url` | yes | a path starting with `/` (not `//`) or an `http(s)://` URL; anything else (`javascript:` ...) is rejected |
+| `departments` | no | array of department ids from `women, men, accessories, beauty, home, kitchen, sports`, no duplicates |
+| `keywords` | no | array of lower-case words (`a-z`, `0-9`, `_`, `-`; no spaces), no duplicates |
+
+An ad needs at least one department or keyword. Validation is strict: invalid JSON, a top-level value that is not a non-empty array, an unknown field, a missing or wrongly typed field, a duplicate id and the rules above all make the process **exit with status 1 at start**, printing the file and the ad (`ad #<index>`, id) that is wrong. It never serves a partial config. An `ADS_CONFIG` path that cannot be read fails the same way (there is no silent fallback to the bundled ads).
+
+The bundled config has **two ads per department** (14, ids `<department>-1`, `<department>-2`, `redirect_url` `/?category=<department id>`) plus **three keyword ads** with no department (`search-dresses`, `search-gifts`, `search-running`, linking to the women, beauty and sports category pages). The 14 department ads carry as keywords the type words / source categories that the product catalog puts into a product's `categories`:
+
+| Department id | Keywords of its ads (type words / source categories from the catalog seed data) |
+|---|---|
+| `women` | `tops`, `bags`, `womens-dresses`, `womens-shoes`, `womens-bags`, and the shared `clothing`, `footwear` |
+| `men` | `mens-shirts`, `mens-shoes`, and the shared `clothing`, `footwear` |
+| `accessories` | `jewellery`, `watches`, `sunglasses`, `mens-watches`, `womens-watches`, `womens-jewellery` |
+| `beauty` | `fragrances`, `makeup`, `skin-care` |
+| `home` | `decor`, `furniture`, `home-decoration` |
+| `kitchen` | `kitchen-accessories` |
+| `sports` | `sports-accessories` |
+
+### Matching and rotation
+
+- Keys are trimmed and compared case-insensitively; blank keys are ignored. Matching is on whole keys: `dress` does not match `dresses` or `dress shoes` (the frontend sends one search word per key).
+- An ad matches a key if the key is one of its `departments` or one of its `keywords`.
+- **A key that names a department takes precedence.** If at least one ad matches by department, only the ads matched by department are used. A product's `categories` starts with its department (e.g. `["men","footwear","mens-shoes"]`), so a men's shoe gets the `men` ads and not also the `women` ads through the shared word `footwear`. Only when no key names a department are the keyword matches used (search pages send plain words; `footwear` alone matches the women and men ads).
+- The matches are taken in config order without duplicates. If there are more than two, the response contains two of them: the start position is a process-wide counter (one tick per `GetAds` call that matched something) modulo the number of matches, wrapping around, so successive calls cycle through all matches. With exactly two matches both are returned and only their order alternates; with one, that one.
+- No match, no keys or only blank keys: two different random ads from the whole config (one if the config has a single ad).
+
+This changes one earlier behaviour: a cart with several departments used to get the ads of all of them; it now gets two.
+
+The keywords of the bundled ads were taken from the distinct `categories` values of the 117 products in `product-catalog-service` `data/seed/products.json` (as of 2026-10-27); `AdsMapTest` checks that each of those values yields an ad. New categories in the catalog need a keyword in the config, otherwise those products fall back to random ads.
 
 ## Configuration
 
@@ -35,17 +93,24 @@ All configuration is via environment variables. Nothing is required; every varia
 | Variable | Default | Description |
 |---|---|---|
 | `PORT` | `9555` | gRPC listen port |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4317` | OTLP/**gRPC** endpoint for **traces, metrics and logs** (scheme required), e.g. `http://alloy.monitoring.svc.cluster.local:4317`. Legacy fallback: `COLLECTOR_SERVICE_ADDR` (`host:port`) |
+| `ADS_CONFIG` | unset (bundled `ads.json`) | Path of a JSON ad config that replaces the bundled one (schema above). Invalid or unreadable = the process exits 1 at start |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | unset (telemetry off) | OTLP/**gRPC** endpoint for **traces, metrics and logs**: an absolute http(s) URL, e.g. `http://alloy.monitoring.svc.cluster.local:4317`. Telemetry is on iff this is a valid URL; empty or malformed (`alloy:4317`, `ftp://...`) means off with one warning, never a crash. The legacy `COLLECTOR_SERVICE_ADDR` is **removed** |
+| `OTEL_SDK_DISABLED` | unset | `true` (trimmed, case-insensitive) forces all telemetry and profiling off even if endpoints are set |
+| `ENABLE_PROFILING` | unset | `0` forces profiling off; `1` alone starts nothing (profiling needs `PYROSCOPE_ADDR`). The legacy `ENABLE_TRACING` is **removed** (the compose files still set it; it is ignored here) |
 | `OTEL_METRIC_EXPORT_INTERVAL` | `15000` | Milliseconds between metric pushes |
-| `OTEL_SERVICE_NAME` | `ad-service` | `service.name` — becomes the Prometheus `job` and the Loki `service_name`; keep the default, dashboards depend on it |
-| `SERVICE_VERSION` | `1.0.0` | `service.version` resource attribute |
-| `PYROSCOPE_ADDR` | `http://localhost:4040` | Profiles use the Pyroscope SDK push protocol (**not** OTLP). Point it at Alloy (`http://alloy.monitoring.svc.cluster.local:4040`), which forwards to Pyroscope, or directly at Pyroscope |
+| `OTEL_SERVICE_NAME` | `ad-service` | `service.name`, the `service` log field and the Pyroscope `service_name`; becomes the Prometheus `job` and the Loki `service_name`; keep the default, dashboards depend on it |
+| `SERVICE_VERSION` | jar manifest `Implementation-Version` (build property `-PappVersion`, default `dev`) | `service.version`, the `version` log field, the `build_info` metric and the Pyroscope `version` tag |
+| `SERVICE_COMMIT` | `unknown` | `commit` in the `starting` log line and in the `build_info` metric (set by the image build from the `SERVICE_COMMIT` build arg) |
+| `DEPLOYMENT_ENVIRONMENT` | `local` | `deployment.environment` resource attribute and the Pyroscope `environment` tag |
+| `LOG_LEVEL` | `info` | `trace`, `debug`, `info`, `warn`/`warning`, `error`, `fatal`; anything else = `info` |
+| `OTEL_EXPORTER_OTLP_PROTOCOL`, `OTEL_RESOURCE_ATTRIBUTES`, `OTEL_TRACES_SAMPLER`(`_ARG`) | not read | OTLP/gRPC and parent-based always-on sampling are fixed in `Telemetry.java`; `service.namespace` is always `everly` |
+| `PYROSCOPE_ADDR` | unset (profiling off) | Profiles use the Pyroscope SDK push protocol (**not** OTLP). Point it at Alloy (`http://alloy.monitoring.svc.cluster.local:4040`), which forwards to Pyroscope, or directly at Pyroscope. There is no default address |
 
 Notes:
 
 - Telemetry is **pushed**, not scraped: traces, metrics and logs share one OTLP/gRPC endpoint (Alloy); profiles go to Pyroscope (via Alloy). `service.instance.id` is the pod hostname, so replicas stay distinct in Mimir.
-- The former Prometheus endpoint (`METRICS_PORT`) no longer exists. Logs keep going to stdout and are additionally exported over OTLP with trace ids.
-- Telemetry and profiling cannot be switched off with a flag; with no reachable collector the exporters just log errors and the service keeps serving.
+- The former Prometheus endpoint (`METRICS_PORT`) no longer exists. Logs go to stdout as JSON (shape below) and are additionally exported over OTLP with trace ids.
+- With no (or an invalid) endpoint, telemetry is off: no exporters, no background connections. With an endpoint that is not reachable the service still starts and serves; exporters are asynchronous with bounded queues (2048 records, dropped when full) and a 3 s deadline per export, export errors appear as (throttled) JSON lines. On SIGTERM the server gets 3 s to finish in-flight calls, telemetry up to 5 s to flush.
 
 ## Container image
 
@@ -54,13 +119,14 @@ Multi-stage [`Dockerfile`](Dockerfile):
 | Stage | Base | What happens |
 |---|---|---|
 | builder | `eclipse-temurin:21-jdk-alpine` | installs `libc6-compat` (needed by `protoc-gen-grpc-java` on musl), resolves deps, `./gradlew installDist` |
-| runtime | `eclipse-temurin:21-jre-alpine` | copies `build/install/hipstershop`, runs as non-root |
+| runtime | `eclipse-temurin:21-jre-alpine` | copies `build/install/hipstershop`, runs as `10001:10001` |
 
 - **Entrypoint:** `bin/AdService` (working dir `/app`). Honours `JAVA_OPTS` / `JAVA_TOOL_OPTIONS`.
-- **User:** `appuser` — UID `100`, GID `101` (verified on the built image). Not a numeric `USER` in the Dockerfile, so Kubernetes `runAsNonRoot` needs `runAsUser: 100` set explicitly.
+- **User:** numeric `USER 10001:10001` (`appuser`/`appgroup`, created with these fixed ids; `id` in the container prints `uid=10001(appuser) gid=10001(appgroup)`). Build args `SERVICE_VERSION` (default `dev`) and `SERVICE_COMMIT` (default `unknown`) set the OCI labels `version`/`revision` (plus `source`, `licenses=Apache-2.0`) and the ENV of the same names.
 - **EXPOSE:** `9555`.
-- **Docker `HEALTHCHECK`:** none (the old one hit the removed `/metrics` endpoint). Kubernetes uses gRPC probes (below).
+- **Docker `HEALTHCHECK`:** `nc -z localhost ${PORT:-9555}` (busybox, TCP connect to the gRPC port; no `healthcheck` subcommand exists). Kubernetes uses gRPC probes (below).
 - **Image size:** ~107 MB.
+- **`RUN apk upgrade --no-cache`** in the runtime stage pulls Alpine security fixes published after the `eclipse-temurin:21-jre-alpine` base was built (the image scan failed on a fixable HIGH finding in `brotli-libs`). This makes builds non-reproducible over time by design; the scan is the reason it is there.
 - **Build context:** the service root. No `.dockerignore` is present, so `build/`, `.gradle/` and `.git` are sent to the daemon — add one if builds feel slow.
 
 ## Kubernetes deployment notes
@@ -100,7 +166,7 @@ livenessProbe:
 ```yaml
 securityContext:
   runAsNonRoot: true
-  runAsUser: 100
+  runAsUser: 10001
   runAsGroup: 101
   allowPrivilegeEscalation: false
   capabilities: { drop: ["ALL"] }
@@ -133,12 +199,26 @@ and was verified under the `restricted` Pod Security Standard on the earlier loc
 |---|---|---|
 | **Traces** | OpenTelemetry SDK, OTLP/gRPC span exporter (`BatchSpanProcessor`); inbound spans from the `opentelemetry-grpc-1.6` server interceptor; W3C `traceparent` propagation; parent-based always-on sampling | `OTEL_EXPORTER_OTLP_ENDPOINT` → Alloy → Tempo |
 | **Metrics** | OTel SDK instruments in `Metrics.java`, pushed by a `PeriodicMetricReader` over OTLP/gRPC every 15 s (replaces the old Micrometer/Prometheus endpoint) | Alloy → Mimir |
-| **Logs** | Log4j2: ECS JSON to stdout **and** the OpenTelemetry appender (OTLP/gRPC, with `trace_id`/`span_id`) | Alloy → Loki |
-| **Profiles** | Pyroscope Java agent (`ITIMER`), pushed to `PYROSCOPE_ADDR` | Alloy `:4040` → Pyroscope |
+| **Logs** | Log4j2 `JsonTemplateLayout` (`LogShape.json`): the standard Everly JSON shape to stdout **and** the OpenTelemetry appender (OTLP/gRPC, with `trace_id`/`span_id`) | Alloy -> Loki (Alloy also reads container stdout) |
+| **Profiles** | Pyroscope Java agent (`ITIMER`), pushed to `PYROSCOPE_ADDR`; tags `service_name`, `version`, `environment` | Alloy `:4040` → Pyroscope |
 
 Metric names: `rpc_server_duration_seconds_{bucket,count,sum}` (explicit buckets 1 ms … 10 s), `rpc_server_requests_total`, `rpc_server_active_requests`, labelled `rpc_system`, `rpc_service`, `rpc_method`, `rpc_grpc_status_code`. The gRPC instrumentation library additionally emits `rpc_server_duration_milliseconds_*` (unused by the dashboard).
 
+Ad counters (OTel counters, `ad_id` attribute): `ads_impressions_total` (one per ad returned by `GetAds`) and `ads_clicks_total` (one per successful `RecordClick`). They are updated next to the in-memory counters; the export to a collector was not run (the tests use a no-op SDK), only the in-process counters and RPCs were verified. `RecordClick` and `GetAdStats` also appear in the `rpc_server_*` metrics with their `rpc_method`.
+
 Every series carries `job="ad-service"` (from `service.name`) and `instance=<pod name>` (`service.instance.id`), which is what the Grafana dashboards select on. Logs land in Loki with `service_name="ad-service"` and trace/span ids, so a log line links to its trace.
+
+**Log shape (OBS-30).** One JSON object per line on stdout, nothing else on stdout/stderr (the OpenTelemetry SDK's `java.util.logging` output is bridged into the same shape):
+
+```json
+{"timestamp":"2026-11-13T16:55:46.596Z","severity":"info","message":"Served 2 ads for context_keys=[women]","service":"ad-service","version":"dev","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","span_id":"00f067aa0ba902b7"}
+```
+
+`timestamp` RFC3339 UTC (milliseconds), `severity` lower case (`debug`, `info`, `warning`, `error`, `fatal`), `message`, `service`, `version`; `trace_id` / `span_id` only while a span is active (the `opentelemetry-log4j-context-data` provider copies them from the current span into the Log4j thread context; the gRPC server interceptor makes the span current for the handlers); `error` (the exception message, no stack trace) on `logger.error(msg, throwable)`; `commit` on the `starting` line (which also carries `version`). The service has no request id. Nothing personal is logged: the lines carry ad ids, context keys (department/category words) and counts. Uncaught exceptions and an invalid ad config are logged through the same layout (`fatal`). `LogShapeTest` pins the shape against the real `log4j2.xml`.
+
+**Metrics** are pushed over OTLP, there is no scrape endpoint (documented exception to the port-9090 rule: the Java service delivers its RED series over OTLP). `build_info{service,version,commit}` is a gauge with value 1.
+
+**Profiling** is on only with `PYROSCOPE_ADDR`.
 
 The Pyroscope agent extracts a native library into `/tmp` and loads it, so `/tmp` must be writable **and executable** (an `emptyDir` is; a `noexec` tmpfs is not).
 
@@ -166,10 +246,28 @@ docker run --rm -p 9555:9555 \
 
 No reflection, so the proto is required:
 
+Without a local `grpcurl`, the container image works against a running container (this is how the new RPCs were checked on 2026-11-01: see Verification):
+
 ```bash
-# ads for given categories
+docker run --rm --network container:<ad-service container> -v "$PWD/src/main/proto:/p:ro" \
+  fullstorydev/grpcurl:v1.9.1 -plaintext -import-path /p -proto ad.proto \
+  -d '{"context_keys": ["kitchen"]}' localhost:9555 hipstershop.AdService/GetAds
+```
+
+```bash
+# click on an ad, then read the counters (zero counts are omitted from grpcurl's JSON)
+grpcurl -plaintext -proto src/main/proto/ad.proto -d '{"ad_id": "men-1"}' \
+  localhost:9555 hipstershop.AdService/RecordClick
+grpcurl -plaintext -proto src/main/proto/ad.proto -d '{}' \
+  localhost:9555 hipstershop.AdService/GetAdStats
+
+# ads for search words (returns the keyword ad `search-dresses`)
+grpcurl -plaintext -proto src/main/proto/ad.proto -d '{"context_keys": ["dress"]}' \
+  localhost:9555 hipstershop.AdService/GetAds
+
+# ads for a product's categories (returns the two `men` ads)
 grpcurl -plaintext -proto src/main/proto/ad.proto \
-  -d '{"context_keys": ["clothing", "kitchen"]}' \
+  -d '{"context_keys": ["men", "footwear", "mens-shoes"]}' \
   localhost:9555 hipstershop.AdService/GetAds
 
 # random ads
@@ -183,18 +281,40 @@ grpcurl -plaintext -import-path ../email-service/proto -proto health.proto \
 # metrics
 ```
 
+## Verification
+
+Run on 2026-11-01 (branch `feat/ads-config-clicks`):
+
+- `./gradlew test --no-daemon` in `eclipse-temurin:21-jdk-alpine` (+ `libc6-compat`): 174 tests, 0 failures. Covers config loading (valid file, duplicate id, missing field per required field, bad path, invalid values), a matching table, rotation, `RecordClick`/`GetAdStats` through an in-process gRPC channel, concurrent counting, and the pre-existing `AdsMapTest`/`AdServiceImplTest`/`TelemetryTest` unchanged.
+- `docker build -t ad-service:local .` succeeded. A container on a throwaway network, called with `grpcurl` (`-proto`, no reflection): `GetAds` with a department key, a search word and `footwear` twice (different pairs), with no keys; `RecordClick` for a known id (OK) and an unknown id (`NotFound`); `GetAdStats` showing the impressions and the click. With `ADS_CONFIG` pointing at a one-ad file the container served only that ad; with a duplicate-id file and a missing file it exited 1 with the message above. `docker stop` ran the shutdown hook (log line `Shutting down AdService...`, exit 143). The container started with no telemetry variables logged "Telemetry disabled" and "Profiling disabled".
+- Not run: the `ads_*_total` export to a real collector, a Kubernetes deployment, the CI pipeline.
+
+### Observability step 3 (2026-11-13, branch `feat/observability-step3`)
+
+- `./gradlew test --no-daemon` in `eclipse-temurin:21-jdk-alpine` (+ `libc6-compat`, `--memory 768m`): all tests pass (226 tests, 0 failures; the last run). New: env matrix for telemetry and profiling (`TelemetryTest`), resource attributes, Pyroscope labels, a blackholed collector (TCP socket that never answers: startup < 5 s, shutdown < 9 s asserted, about 5 s measured), log shape incl. trace ids inside and outside a span (`LogShapeTest`), level and version resolution (`LogConfigTest`).
+- `installDist` and the start script run in the same container: with `OTEL_EXPORTER_OTLP_ENDPOINT=http://192.0.2.1:4317` (blackhole) SIGTERM ended the process in 4 s (exit 143); an empty endpoint starts with telemetry off and JSON lines only.
+- Not run: the Docker image build, the compose stack, export to a real Alloy/Tempo/Loki, Pyroscope profiles with the new tags.
+
 ## Project structure
 
 ```
 ├── src/main/
 │   ├── java/hipstershop/
-│   │   ├── AdService.java       # entrypoint: telemetry bootstrap, gRPC server, metrics HTTP server, shutdown hook
-│   │   ├── AdServiceImpl.java   # GetAds handler (+ metrics recording)
-│   │   ├── AdsMap.java          # hard-coded ad catalog keyed by category
-│   │   ├── Metrics.java         # rpc_server_* Micrometer metrics
-│   │   └── Telemetry.java       # OTel tracing + Pyroscope init
+│   │   ├── AdService.java       # entrypoint: ad config load (exit 1 if invalid), telemetry bootstrap, gRPC server, shutdown hook
+│   │   ├── AdServiceImpl.java   # GetAds, RecordClick, GetAdStats handlers (+ metrics recording)
+│   │   ├── AdCatalog.java       # loads and validates the ad JSON; matching, rotation, random fallback
+│   │   ├── AdConfigException.java
+│   │   ├── AdStats.java         # thread-safe in-memory impression/click counters
+│   │   ├── AdsMap.java          # static access to the bundled default catalog (tests, one-arg AdServiceImpl)
+│   │   ├── Metrics.java         # rpc_server_*, ads_*_total and build_info OTel metrics
+│   │   ├── Telemetry.java       # OTel SDK + Pyroscope init, env contract, bounded shutdown
+│   │   ├── LogConfig.java       # LOG_LEVEL / service name / version for log4j2.xml, java.util.logging bridge
+│   │   └── BuildInfo.java       # version (SERVICE_VERSION, manifest, dev) and commit
 │   ├── proto/ad.proto           # service contract
-│   └── resources/log4j2.xml     # ECS JSON logging
+│   └── resources/
+│       ├── ads.json             # bundled default ad config
+│       ├── log4j2.xml           # appenders, levels
+│       └── LogShape.json        # the JSON log shape
 ├── build.gradle                 # gRPC 1.79, OTel 1.49, Micrometer, Pyroscope agent, pinned Netty
 ├── settings.gradle
 ├── gradlew / gradle/
@@ -203,7 +323,13 @@ grpcurl -plaintext -import-path ../email-service/proto -proto health.proto \
 
 ## Known limitations
 
-- The ad catalog is compiled in; changing ads means a new image.
-- `getRandom()` samples with replacement, so the two random ads can be identical.
-- Telemetry/profiling are always on (no kill switch); point the endpoints at something reachable or expect periodic exporter error logs.
-- Graceful shutdown calls `server.shutdown()` but does not await in-flight RPCs; set a short `terminationGracePeriodSeconds` (10–15 s is plenty).
+- **Counters are per process and in memory**: they reset on every restart and each replica counts on its own, so `GetAdStats` and `ads_*_total` only describe the replica that answered (the metrics are the way to aggregate across replicas). There is no persistence and no de-duplication of clicks.
+- The rotation counter is also per process, and shared by all keys: with several different matching sets interleaving, the rotation of one set can skip positions. It is meant to vary the ads shown, not to guarantee an even share.
+- `ADS_CONFIG` is read once at start; changing ads means restarting the process (mounting the file as a ConfigMap and restarting is enough, no new image).
+- The keywords of the bundled ads are a copy of the catalog's category words; categories added to the catalog later fall back to random ads until they are added to the config.
+- The callers (frontend, load generator) are changed in their own repositories; this repo only provides the server side. The proto change is additive, so old callers keep working.
+- The `/?category=<id>` links only work once the frontend supports the `category` query parameter (not part of this repo).
+- Ad copy promises nothing the shop does not do (owner decision 2026-11-13): no prices, discounts, free shipping/returns or gift wrap, because the shop has no such logic (shipping is a flat per-zone tariff shown in the cart). The copy only names product groups that exist in the catalog seed. `AdsMapTest.bundledCopy_makesNoOffers` fails if a price, percentage, "free", "off", "for 2" or "gift wrap" wording comes back.
+- With an endpoint set but unreachable, the exporters log errors periodically (set none, or OTEL_SDK_DISABLED=true, to turn telemetry off).
+- Graceful shutdown: `server.shutdown()`, then up to 3 s for in-flight RPCs (then `shutdownNow()`), then up to 5 s to flush telemetry; `terminationGracePeriodSeconds` of 10-15 s is plenty.
+- The Pyroscope agent is not stopped on SIGTERM, so the last seconds of CPU samples are dropped.

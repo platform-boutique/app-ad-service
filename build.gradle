@@ -10,7 +10,9 @@ repositories {
 
 description = 'Ad Service'
 group       = 'adservice'
-version     = '1.0.0'
+// jar manifest Implementation-Version = the service version when SERVICE_VERSION is not set (CODE-06);
+// `-PappVersion=<v>` sets it at build time, the default is `dev`.
+version     = project.findProperty('appVersion') ?: 'dev'
 
 def grpcVersion        = '1.79.0'
 def protocVersion      = '4.34.0'
@@ -36,6 +38,10 @@ configurations.configureEach {
             details.useVersion '2.21.7'
             details.because 'jackson-core/databind HIGH CVEs fixed in 2.21.7'
         }
+        if (details.requested.group == 'com.google.guava' && details.requested.name == 'guava') {
+            details.useVersion '33.7.2-jre'
+            details.because 'CVE-2026-102554 (HIGH, denial of service) fixed in 33.7.2; grpc brings 33.5.0-jre transitively'
+        }
     }
 }
 
@@ -58,6 +64,9 @@ dependencies {
     implementation "io.opentelemetry:opentelemetry-extension-trace-propagators:${otelVersion}"
     // Logs — forwards Log4j2 records (with trace ids) to the OTel logs pipeline
     implementation "io.opentelemetry.instrumentation:opentelemetry-log4j-appender-2.17:2.15.0-alpha"
+    // Puts trace_id / span_id of the current span into the Log4j2 thread context, so the stdout JSON carries them
+    // (same release as the appender above; reason: stdout logs had no reliable trace ids, OBS-30)
+    implementation "io.opentelemetry.instrumentation:opentelemetry-log4j-context-data-2.17-autoconfigure:2.15.0-alpha"
 
     // Pyroscope — continuous profiling
     implementation "io.pyroscope:agent:${pyroscopeVersion}"
@@ -67,7 +76,8 @@ dependencies {
     implementation "org.apache.logging.log4j:log4j-layout-template-json:2.25.0"
 
     runtimeOnly "io.netty:netty-tcnative-boringssl-static:2.0.75.Final"
-    runtimeOnly "com.fasterxml.jackson.core:jackson-databind:2.21.7"
+    // already shipped at runtime (OTLP exporter); now also compiled against to parse the ad config
+    implementation "com.fasterxml.jackson.core:jackson-databind:2.21.7"
 
     // Testing
     testImplementation "org.junit.jupiter:junit-jupiter:5.11.4"
@@ -114,7 +124,7 @@ application {
 
 jar {
     manifest {
-        attributes 'Main-Class': 'hipstershop.AdService'
+        attributes 'Main-Class': 'hipstershop.AdService', 'Implementation-Version': project.version
     }
 }
 

@@ -1,0 +1,235 @@
+[
+  {
+    "id": "women-1",
+    "text": "Dresses and tops at Everly. Browse the women's collection.",
+    "redirect_url": "/?category=women",
+    "departments": [
+      "women"
+    ],
+    "keywords": [
+      "clothing",
+      "footwear",
+      "tops",
+      "bags",
+      "womens-dresses",
+      "womens-shoes",
+      "womens-bags"
+    ]
+  },
+  {
+    "id": "women-2",
+    "text": "Shoes and bags to finish the look. Browse women's footwear and handbags.",
+    "redirect_url": "/?category=women",
+    "departments": [
+      "women"
+    ],
+    "keywords": [
+      "clothing",
+      "footwear",
+      "tops",
+      "bags",
+      "womens-dresses",
+      "womens-shoes",
+      "womens-bags"
+    ]
+  },
+  {
+    "id": "men-1",
+    "text": "Crisp shirts for work and weekend. Browse the Everly men's shirts.",
+    "redirect_url": "/?category=men",
+    "departments": [
+      "men"
+    ],
+    "keywords": [
+      "clothing",
+      "footwear",
+      "mens-shirts",
+      "mens-shoes"
+    ]
+  },
+  {
+    "id": "men-2",
+    "text": "Step out in comfort: men's shoes from everyday sneakers to sports cleats.",
+    "redirect_url": "/?category=men",
+    "departments": [
+      "men"
+    ],
+    "keywords": [
+      "clothing",
+      "footwear",
+      "mens-shirts",
+      "mens-shoes"
+    ]
+  },
+  {
+    "id": "accessories-1",
+    "text": "Watches for every wrist. Discover the Everly accessories edit.",
+    "redirect_url": "/?category=accessories",
+    "departments": [
+      "accessories"
+    ],
+    "keywords": [
+      "jewellery",
+      "watches",
+      "sunglasses",
+      "mens-watches",
+      "womens-watches",
+      "womens-jewellery"
+    ]
+  },
+  {
+    "id": "accessories-2",
+    "text": "Sunglasses and jewellery that make the outfit. Browse the Everly accessories.",
+    "redirect_url": "/?category=accessories",
+    "departments": [
+      "accessories"
+    ],
+    "keywords": [
+      "jewellery",
+      "watches",
+      "sunglasses",
+      "mens-watches",
+      "womens-watches",
+      "womens-jewellery"
+    ]
+  },
+  {
+    "id": "beauty-1",
+    "text": "Find your signature scent. Fragrances for him and her at Everly.",
+    "redirect_url": "/?category=beauty",
+    "departments": [
+      "beauty"
+    ],
+    "keywords": [
+      "fragrances",
+      "makeup",
+      "skin-care"
+    ]
+  },
+  {
+    "id": "beauty-2",
+    "text": "Glow on: skin care and makeup essentials at Everly.",
+    "redirect_url": "/?category=beauty",
+    "departments": [
+      "beauty"
+    ],
+    "keywords": [
+      "fragrances",
+      "makeup",
+      "skin-care"
+    ]
+  },
+  {
+    "id": "home-1",
+    "text": "Make it home: decor pieces that bring warmth to every room.",
+    "redirect_url": "/?category=home",
+    "departments": [
+      "home"
+    ],
+    "keywords": [
+      "decor",
+      "furniture",
+      "home-decoration"
+    ]
+  },
+  {
+    "id": "home-2",
+    "text": "Furniture that fits real life. Browse the Everly home collection.",
+    "redirect_url": "/?category=home",
+    "departments": [
+      "home"
+    ],
+    "keywords": [
+      "decor",
+      "furniture",
+      "home-decoration"
+    ]
+  },
+  {
+    "id": "kitchen-1",
+    "text": "Cook like you mean it. Kitchen tools and accessories for every recipe.",
+    "redirect_url": "/?category=kitchen",
+    "departments": [
+      "kitchen"
+    ],
+    "keywords": [
+      "kitchen-accessories"
+    ]
+  },
+  {
+    "id": "kitchen-2",
+    "text": "Upgrade your kitchen basics: woks, chopping boards and gadgets.",
+    "redirect_url": "/?category=kitchen",
+    "departments": [
+      "kitchen"
+    ],
+    "keywords": [
+      "kitchen-accessories"
+    ]
+  },
+  {
+    "id": "sports-1",
+    "text": "Gear up for the season. Balls, bats and protective gear for every game.",
+    "redirect_url": "/?category=sports",
+    "departments": [
+      "sports"
+    ],
+    "keywords": [
+      "sports-accessories"
+    ]
+  },
+  {
+    "id": "sports-2",
+    "text": "Train harder, play longer: sports accessories for every game.",
+    "redirect_url": "/?category=sports",
+    "departments": [
+      "sports"
+    ],
+    "keywords": [
+      "sports-accessories"
+    ]
+  },
+  {
+    "id": "search-dresses",
+    "text": "Dress up: dresses, gowns and skirts at Everly.",
+    "redirect_url": "/?category=women",
+    "departments": [],
+    "keywords": [
+      "dress",
+      "dresses",
+      "skirt",
+      "skirts",
+      "gown",
+      "blouse"
+    ]
+  },
+  {
+    "id": "search-gifts",
+    "text": "Looking for a gift? Fragrances and skin care for him and her.",
+    "redirect_url": "/?category=beauty",
+    "departments": [],
+    "keywords": [
+      "gift",
+      "gifts",
+      "present",
+      "perfume",
+      "cologne",
+      "scent"
+    ]
+  },
+  {
+    "id": "search-running",
+    "text": "Ready, set, run: trainers and sneakers for your next run.",
+    "redirect_url": "/?category=sports",
+    "departments": [],
+    "keywords": [
+      "run",
+      "running",
+      "jogging",
+      "trainers",
+      "sneakers",
+      "gym",
+      "fitness"
+    ]
+  }
+]

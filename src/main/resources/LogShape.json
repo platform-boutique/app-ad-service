@@ -1,0 +1,28 @@
+{
+  "timestamp": {
+    "$resolver": "timestamp",
+    "pattern": {
+      "format": "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
+      "timeZone": "UTC"
+    }
+  },
+  "severity": {
+    "$resolver": "pattern",
+    "pattern": "%level{WARN=warning, lowerCase=true}",
+    "stackTraceEnabled": false
+  },
+  "message": {
+    "$resolver": "message",
+    "stringified": true
+  },
+  "error": {
+    "$resolver": "exception",
+    "field": "message"
+  },
+  "context": {
+    "$resolver": "mdc",
+    "flatten": true,
+    "pattern": "^(trace_id|span_id|request_id|commit)$",
+    "stringified": true
+  }
+}
