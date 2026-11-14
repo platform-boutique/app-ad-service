@@ -38,6 +38,10 @@ configurations.configureEach {
             details.useVersion '2.21.7'
             details.because 'jackson-core/databind HIGH CVEs fixed in 2.21.7'
         }
+        if (details.requested.group == 'com.google.guava' && details.requested.name == 'guava') {
+            details.useVersion '33.7.2-jre'
+            details.because 'CVE-2026-102554 (HIGH, denial of service) fixed in 33.7.2; grpc brings 33.5.0-jre transitively'
+        }
     }
 }
 
