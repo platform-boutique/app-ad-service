@@ -21,14 +21,32 @@ FROM eclipse-temurin:21-jre-alpine AS runtime
 # Pick up Alpine security fixes published after the base image was built (the image scan fails on fixable HIGH/CRITICAL findings)
 RUN apk upgrade --no-cache
 
-RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+ARG SERVICE_VERSION=dev
+ARG SERVICE_COMMIT=unknown
+
+LABEL org.opencontainers.image.title="ad-service" \
+      org.opencontainers.image.source="https://github.com/platform-boutique/app-ad-service" \
+      org.opencontainers.image.revision="${SERVICE_COMMIT}" \
+      org.opencontainers.image.version="${SERVICE_VERSION}" \
+      org.opencontainers.image.licenses="Apache-2.0"
+
+# SERVICE_VERSION is read by the app at run time. The commit is read from GIT_COMMIT today (BuildInfo.java), not SERVICE_COMMIT.
+ENV SERVICE_VERSION=${SERVICE_VERSION} \
+    SERVICE_COMMIT=${SERVICE_COMMIT}
+
+RUN addgroup -S -g 10001 appgroup && adduser -S -u 10001 -G appgroup appuser
 
 WORKDIR /app
 
-COPY --from=builder --chown=appuser:appgroup /app/build/install/hipstershop ./
+COPY --from=builder --chown=10001:10001 /app/build/install/hipstershop ./
 
-USER appuser
+# Numeric so Kubernetes runAsNonRoot can verify it (IMG-02: UID:GID 10001)
+USER 10001:10001
 
 EXPOSE 9555
+
+# The service has no healthcheck subcommand: TCP connect to the gRPC port with busybox nc (JRE alpine image)
+HEALTHCHECK --interval=10s --timeout=5s --start-period=20s --retries=3 \
+    CMD nc -z localhost ${PORT:-9555} || exit 1
 
 ENTRYPOINT ["bin/AdService"]

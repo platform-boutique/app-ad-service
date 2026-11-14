@@ -1,0 +1,25 @@
+# The image build needs gradlew, gradle/, build.gradle, settings.gradle and src/.
+.git
+.gitignore
+.dockerignore
+.pre-commit-config.yaml
+.github
+Dockerfile
+README.md
+STATUS.md
+NOTES*.md
+docs
+site
+mkdocs.yml
+catalog-info.yaml
+build/
+.gradle/
+**/*.class
+*.log
+.env
+.env.*
+*.pem
+*.key
+.idea
+.vscode
+*.iml
