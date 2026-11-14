@@ -119,12 +119,12 @@ Multi-stage [`Dockerfile`](Dockerfile):
 | Stage | Base | What happens |
 |---|---|---|
 | builder | `eclipse-temurin:21-jdk-alpine` | installs `libc6-compat` (needed by `protoc-gen-grpc-java` on musl), resolves deps, `./gradlew installDist` |
-| runtime | `eclipse-temurin:21-jre-alpine` | copies `build/install/hipstershop`, runs as non-root |
+| runtime | `eclipse-temurin:21-jre-alpine` | copies `build/install/hipstershop`, runs as `10001:10001` |
 
 - **Entrypoint:** `bin/AdService` (working dir `/app`). Honours `JAVA_OPTS` / `JAVA_TOOL_OPTIONS`.
-- **User:** `appuser` — UID `100`, GID `101` (verified on the built image). Not a numeric `USER` in the Dockerfile, so Kubernetes `runAsNonRoot` needs `runAsUser: 100` set explicitly.
+- **User:** numeric `USER 10001:10001` (`appuser`/`appgroup`, created with these fixed ids; `id` in the container prints `uid=10001(appuser) gid=10001(appgroup)`). Build args `SERVICE_VERSION` (default `dev`) and `SERVICE_COMMIT` (default `unknown`) set the OCI labels `version`/`revision` (plus `source`, `licenses=Apache-2.0`) and the ENV of the same names.
 - **EXPOSE:** `9555`.
-- **Docker `HEALTHCHECK`:** none (the old one hit the removed `/metrics` endpoint). Kubernetes uses gRPC probes (below).
+- **Docker `HEALTHCHECK`:** `nc -z localhost ${PORT:-9555}` (busybox, TCP connect to the gRPC port; no `healthcheck` subcommand exists). Kubernetes uses gRPC probes (below).
 - **Image size:** ~107 MB.
 - **`RUN apk upgrade --no-cache`** in the runtime stage pulls Alpine security fixes published after the `eclipse-temurin:21-jre-alpine` base was built (the image scan failed on a fixable HIGH finding in `brotli-libs`). This makes builds non-reproducible over time by design; the scan is the reason it is there.
 - **Build context:** the service root. No `.dockerignore` is present, so `build/`, `.gradle/` and `.git` are sent to the daemon — add one if builds feel slow.
@@ -166,7 +166,7 @@ livenessProbe:
 ```yaml
 securityContext:
   runAsNonRoot: true
-  runAsUser: 100
+  runAsUser: 10001
   runAsGroup: 101
   allowPrivilegeEscalation: false
   capabilities: { drop: ["ALL"] }
