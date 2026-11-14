@@ -36,7 +36,7 @@ flowchart LR
 | **State** | None. Ad catalog is hard-coded in `AdsMap.java` |
 | **Depends on** | Nothing (optional: OTLP collector, Pyroscope) |
 | **Called by** | `frontend` (with a 100 ms client-side deadline) |
-| **gRPC reflection** | Not enabled — pass `-proto` to `grpcurl` |
+| **gRPC reflection** | Enabled (v1 and v1alpha): `grpcurl -plaintext localhost:9555 list` works without the proto files |
 
 ## Find it elsewhere
 

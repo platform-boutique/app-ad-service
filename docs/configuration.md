@@ -15,6 +15,8 @@ All configuration is via environment variables. Nothing is required; every varia
 | `SERVICE_COMMIT` | `unknown` | `commit` in the `starting` log line and in the `build_info` metric  |
 | `DEPLOYMENT_ENVIRONMENT` | `local` | `deployment.environment` resource attribute and the Pyroscope `environment` tag |
 | `LOG_LEVEL` | `info` | `trace`, `debug`, `info`, `warn`/`warning`, `error`, `fatal`; anything else = `info` |
+| `OTEL_EXPORTER_OTLP_HEADERS` (also `_TRACES_` / `_METRICS_` / `_LOGS_HEADERS`) | unset | Extra headers on every OTLP export, `key1=value1,key2=value2` with percent-encoded values (tenant or auth, FUT-02). The signal-specific variable replaces the general one for its signal. Values are never logged |
+| `OTEL_EXPORTER_OTLP_CERTIFICATE`, `OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE`, `OTEL_EXPORTER_OTLP_CLIENT_KEY` (also with `_TRACES_` / `_METRICS_` / `_LOGS_`) | unset | PEM files: the CA that signs the collector certificate, and for mutual TLS the client certificate and its PKCS#8 key. An unreadable file is logged by path and ignored (the default trust store stays; this never weakens the connection). Used with an `https://` endpoint |
 | `OTEL_EXPORTER_OTLP_PROTOCOL`, `OTEL_RESOURCE_ATTRIBUTES`, `OTEL_TRACES_SAMPLER`(`_ARG`) | not read | OTLP/gRPC and parent-based always-on sampling are fixed in `Telemetry.java`; `service.namespace` is always `everly` |
 | `PYROSCOPE_ADDR` | unset (profiling off) | Profiles use the Pyroscope SDK push protocol (**not** OTLP). Point it at Alloy (`http://alloy.monitoring.svc.cluster.local:4040`), which forwards to Pyroscope, or directly at Pyroscope. There is no default address |
 

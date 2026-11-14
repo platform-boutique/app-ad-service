@@ -62,6 +62,9 @@ dependencies {
     implementation "io.opentelemetry.semconv:opentelemetry-semconv:1.25.0-alpha"
     implementation "io.opentelemetry.instrumentation:opentelemetry-grpc-1.6:2.9.0-alpha"
     implementation "io.opentelemetry:opentelemetry-extension-trace-propagators:${otelVersion}"
+    // JVM runtime metrics (OBS-20): jvm.memory/gc/threads/classes/cpu. Same release as the Log4j appender below,
+    // which keeps it on the OpenTelemetry API 1.49 used here (2.15.0-alpha depends on opentelemetry-api 1.49.0).
+    implementation "io.opentelemetry.instrumentation:opentelemetry-runtime-telemetry-java17:2.15.0-alpha"
     // Logs — forwards Log4j2 records (with trace ids) to the OTel logs pipeline
     implementation "io.opentelemetry.instrumentation:opentelemetry-log4j-appender-2.17:2.15.0-alpha"
     // Puts trace_id / span_id of the current span into the Log4j2 thread context, so the stdout JSON carries them
@@ -84,6 +87,8 @@ dependencies {
     testRuntimeOnly "org.junit.jupiter:junit-jupiter-engine:5.11.4"
     testImplementation "io.grpc:grpc-testing:${grpcVersion}"
     testImplementation "io.grpc:grpc-inprocess:${grpcVersion}"
+    // InMemoryMetricReader / InMemorySpanExporter for the runtime-metrics test (same release as the SDK)
+    testImplementation "io.opentelemetry:opentelemetry-sdk-testing:${otelVersion}"
 }
 
 test {
