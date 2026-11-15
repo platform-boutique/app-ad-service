@@ -9,7 +9,7 @@
 
 Metric names: `rpc_server_duration_seconds_{bucket,count,sum}` (explicit buckets 1 ms … 10 s), `rpc_server_requests_total`, `rpc_server_active_requests`, labelled `rpc_system`, `rpc_service`, `rpc_method`, `rpc_grpc_status_code`. The gRPC instrumentation library additionally emits `rpc_server_duration_milliseconds_*` (unused by the dashboard).
 
-`build_info{service,version,commit}` = 1 (OTLP). There is no scrape endpoint: this service delivers RED metrics over OTLP.
+`build_info{service,version,commit}` = 1 (OTLP). JVM runtime metrics: `jvm.memory.*`, `jvm.gc.*`, `jvm.thread.count`, `jvm.class.*`, `jvm.cpu.*`. There is no scrape endpoint: this service delivers RED metrics over OTLP.
 
 Log lines carry `trace_id` / `span_id` only while a span is active; `LogShapeTest` pins the shape. Field list and an example: README section "Observability".
 

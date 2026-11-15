@@ -10,6 +10,6 @@ Multi-stage [`Dockerfile`](https://github.com/platform-boutique/app-ad-service/t
 - **Entrypoint:** `bin/AdService` (working dir `/app`). Honours `JAVA_OPTS` / `JAVA_TOOL_OPTIONS`.
 - **User:** `appuser` — UID `100`, GID `101` (verified on the built image). Not a numeric `USER` in the Dockerfile, so Kubernetes `runAsNonRoot` needs `runAsUser: 100` set explicitly.
 - **EXPOSE:** `9555`.
-- **Docker `HEALTHCHECK`:** none (the old one hit the removed `/metrics` endpoint). Kubernetes uses gRPC probes (below).
+- **Docker `HEALTHCHECK`:** exec form (no shell, nc or curl): `java -cp "/app/lib/*" hipstershop.HealthCheck` asks the local server for its standard `grpc.health.v1` status and exits 0 only for `SERVING` (`PORT` honoured, default 9555; heap capped at 32 MB for the probe). Kubernetes ignores it and uses gRPC probes (below).
 - **Image size:** ~107 MB.
 - **Build context:** the service root. No `.dockerignore` is present, so `build/`, `.gradle/` and `.git` are sent to the daemon — add one if builds feel slow.

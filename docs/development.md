@@ -22,7 +22,7 @@ docker run --rm -p 9555:9555 \
 
 ### Manual gRPC testing
 
-No reflection, so the proto is required:
+Reflection is on, so `grpcurl` needs no proto (`-proto` also works):
 
 ```bash
 # ads for given categories

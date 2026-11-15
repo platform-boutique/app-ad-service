@@ -1,14 +1,19 @@
 package hipstershop;
 
+import io.opentelemetry.api.OpenTelemetry;
 import io.opentelemetry.api.common.AttributeKey;
 import io.opentelemetry.api.baggage.propagation.W3CBaggagePropagator;
 import io.opentelemetry.api.trace.propagation.W3CTraceContextPropagator;
 import io.opentelemetry.context.propagation.TextMapPropagator;
 import io.opentelemetry.context.propagation.ContextPropagators;
 import io.opentelemetry.exporter.otlp.logs.OtlpGrpcLogRecordExporter;
+import io.opentelemetry.exporter.otlp.logs.OtlpGrpcLogRecordExporterBuilder;
 import io.opentelemetry.exporter.otlp.metrics.OtlpGrpcMetricExporter;
+import io.opentelemetry.exporter.otlp.metrics.OtlpGrpcMetricExporterBuilder;
 import io.opentelemetry.exporter.otlp.trace.OtlpGrpcSpanExporter;
+import io.opentelemetry.exporter.otlp.trace.OtlpGrpcSpanExporterBuilder;
 import io.opentelemetry.instrumentation.log4j.appender.v2_17.OpenTelemetryAppender;
+import io.opentelemetry.instrumentation.runtimemetrics.java17.RuntimeMetrics;
 import io.opentelemetry.sdk.OpenTelemetrySdk;
 import io.opentelemetry.sdk.OpenTelemetrySdkBuilder;
 import io.opentelemetry.sdk.logs.SdkLoggerProvider;
@@ -73,23 +78,20 @@ final class Telemetry {
         // every export call has a 3 s deadline, so neither startup nor shutdown waits for a dead collector.
         SdkTracerProvider tracerProvider = SdkTracerProvider.builder()
             .setResource(resource)
-            .addSpanProcessor(BatchSpanProcessor.builder(
-                    OtlpGrpcSpanExporter.builder().setEndpoint(endpoint).setTimeout(EXPORT_TIMEOUT).build())
+            .addSpanProcessor(BatchSpanProcessor.builder(spanExporter(env, endpoint))
                 .setExporterTimeout(EXPORT_TIMEOUT).build())
             .build();
 
         SdkMeterProvider meterProvider = SdkMeterProvider.builder()
             .setResource(resource)
-            .registerMetricReader(PeriodicMetricReader.builder(
-                    OtlpGrpcMetricExporter.builder().setEndpoint(endpoint).setTimeout(EXPORT_TIMEOUT).build())
+            .registerMetricReader(PeriodicMetricReader.builder(metricExporter(env, endpoint))
                 .setInterval(Duration.ofMillis(metricIntervalMs))
                 .build())
             .build();
 
         SdkLoggerProvider loggerProvider = SdkLoggerProvider.builder()
             .setResource(resource)
-            .addLogRecordProcessor(BatchLogRecordProcessor.builder(
-                    OtlpGrpcLogRecordExporter.builder().setEndpoint(endpoint).setTimeout(EXPORT_TIMEOUT).build())
+            .addLogRecordProcessor(BatchLogRecordProcessor.builder(logExporter(env, endpoint))
                 .setExporterTimeout(EXPORT_TIMEOUT).build())
             .build();
 
@@ -106,6 +108,35 @@ final class Telemetry {
 
         logger.info("OTel traces, metrics and logs initialised -> {} (OTLP/gRPC)", endpoint);
         return otelSdk;
+    }
+
+    // Exporters honour the standard OTEL_EXPORTER_OTLP_HEADERS / _CERTIFICATE / _CLIENT_* variables (FUT-02, see OtlpEnv).
+
+    static OtlpGrpcSpanExporter spanExporter(Map<String, String> env, String endpoint) {
+        OtlpGrpcSpanExporterBuilder b = OtlpGrpcSpanExporter.builder().setEndpoint(endpoint).setTimeout(EXPORT_TIMEOUT);
+        OtlpEnv.apply(env, "TRACES", b::addHeader, b::setTrustedCertificates, b::setClientTls);
+        return b.build();
+    }
+
+    static OtlpGrpcMetricExporter metricExporter(Map<String, String> env, String endpoint) {
+        OtlpGrpcMetricExporterBuilder b = OtlpGrpcMetricExporter.builder().setEndpoint(endpoint).setTimeout(EXPORT_TIMEOUT);
+        OtlpEnv.apply(env, "METRICS", b::addHeader, b::setTrustedCertificates, b::setClientTls);
+        return b.build();
+    }
+
+    static OtlpGrpcLogRecordExporter logExporter(Map<String, String> env, String endpoint) {
+        OtlpGrpcLogRecordExporterBuilder b = OtlpGrpcLogRecordExporter.builder().setEndpoint(endpoint).setTimeout(EXPORT_TIMEOUT);
+        OtlpEnv.apply(env, "LOGS", b::addHeader, b::setTrustedCertificates, b::setClientTls);
+        return b.build();
+    }
+
+    /**
+     * JVM runtime metrics (OBS-20): memory, GC, threads, classes, CPU as {@code jvm.*} instruments (Prometheus
+     * {@code jvm_memory_used_bytes} and the like). Close the result on shutdown. With telemetry off the SDK has no
+     * reader, so the callbacks are never invoked.
+     */
+    static AutoCloseable registerRuntimeMetrics(OpenTelemetry openTelemetry) {
+        return RuntimeMetrics.builder(openTelemetry).build();
     }
 
     /** Resource attributes on every signal (OBS-02). */

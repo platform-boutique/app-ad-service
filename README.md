@@ -16,7 +16,7 @@ Part of the [platform-demo](https://github.com/platform-boutique) platform — m
 | **State** | Ads come from a JSON config (bundled `ads.json` or the file named by `ADS_CONFIG`). Impression/click counters live in memory, per process |
 | **Depends on** | Nothing (optional: OTLP collector, Pyroscope) |
 | **Called by** | `frontend` (with a 100 ms client-side deadline) |
-| **gRPC reflection** | Not enabled — pass `-proto` to `grpcurl` |
+| **gRPC reflection** | Enabled (v1 and v1alpha): `grpcurl -plaintext localhost:9555 list` works without the proto files |
 
 ## API
 
@@ -103,6 +103,8 @@ All configuration is via environment variables. Nothing is required; every varia
 | `SERVICE_COMMIT` | `unknown` | `commit` in the `starting` log line and in the `build_info` metric (set by the image build from the `SERVICE_COMMIT` build arg) |
 | `DEPLOYMENT_ENVIRONMENT` | `local` | `deployment.environment` resource attribute and the Pyroscope `environment` tag |
 | `LOG_LEVEL` | `info` | `trace`, `debug`, `info`, `warn`/`warning`, `error`, `fatal`; anything else = `info` |
+| `OTEL_EXPORTER_OTLP_HEADERS` (also `_TRACES_` / `_METRICS_` / `_LOGS_HEADERS`) | unset | Extra headers on every OTLP export, `key1=value1,key2=value2` with percent-encoded values (tenant or auth, FUT-02). The signal-specific variable replaces the general one for its signal. Values are never logged |
+| `OTEL_EXPORTER_OTLP_CERTIFICATE`, `OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE`, `OTEL_EXPORTER_OTLP_CLIENT_KEY` (also with `_TRACES_` / `_METRICS_` / `_LOGS_`) | unset | PEM files: the CA that signs the collector certificate, and for mutual TLS the client certificate and its PKCS#8 key. An unreadable file is logged by path and ignored (the default trust store stays; this never weakens the connection). Used with an `https://` endpoint |
 | `OTEL_EXPORTER_OTLP_PROTOCOL`, `OTEL_RESOURCE_ATTRIBUTES`, `OTEL_TRACES_SAMPLER`(`_ARG`) | not read | OTLP/gRPC and parent-based always-on sampling are fixed in `Telemetry.java`; `service.namespace` is always `everly` |
 | `PYROSCOPE_ADDR` | unset (profiling off) | Profiles use the Pyroscope SDK push protocol (**not** OTLP). Point it at Alloy (`http://alloy.monitoring.svc.cluster.local:4040`), which forwards to Pyroscope, or directly at Pyroscope. There is no default address |
 
@@ -124,7 +126,7 @@ Multi-stage [`Dockerfile`](Dockerfile):
 - **Entrypoint:** `bin/AdService` (working dir `/app`). Honours `JAVA_OPTS` / `JAVA_TOOL_OPTIONS`.
 - **User:** numeric `USER 10001:10001` (`appuser`/`appgroup`, created with these fixed ids; `id` in the container prints `uid=10001(appuser) gid=10001(appgroup)`). Build args `SERVICE_VERSION` (default `dev`) and `SERVICE_COMMIT` (default `unknown`) set the OCI labels `version`/`revision` (plus `source`, `licenses=Apache-2.0`) and the ENV of the same names.
 - **EXPOSE:** `9555`.
-- **Docker `HEALTHCHECK`:** `nc -z localhost ${PORT:-9555}` (busybox, TCP connect to the gRPC port; no `healthcheck` subcommand exists). Kubernetes uses gRPC probes (below).
+- **Docker `HEALTHCHECK`:** exec form (no shell, nc or curl): `java -cp "/app/lib/*" hipstershop.HealthCheck` asks the local server for its standard `grpc.health.v1` status and exits 0 only for `SERVING` (`PORT` honoured, default 9555; heap capped at 32 MB for the probe). Kubernetes ignores it and uses gRPC probes (below).
 - **Image size:** ~107 MB.
 - **`RUN apk upgrade --no-cache`** in the runtime stage pulls Alpine security fixes published after the `eclipse-temurin:21-jre-alpine` base was built (the image scan failed on a fixable HIGH finding in `brotli-libs`). This makes builds non-reproducible over time by design; the scan is the reason it is there.
 - **Build context:** the service root. No `.dockerignore` is present, so `build/`, `.gradle/` and `.git` are sent to the daemon — add one if builds feel slow.
@@ -216,7 +218,7 @@ Every series carries `job="ad-service"` (from `service.name`) and `instance=<pod
 
 `timestamp` RFC3339 UTC (milliseconds), `severity` lower case (`debug`, `info`, `warning`, `error`, `fatal`), `message`, `service`, `version`; `trace_id` / `span_id` only while a span is active (the `opentelemetry-log4j-context-data` provider copies them from the current span into the Log4j thread context; the gRPC server interceptor makes the span current for the handlers); `error` (the exception message, no stack trace) on `logger.error(msg, throwable)`; `commit` on the `starting` line (which also carries `version`). The service has no request id. Nothing personal is logged: the lines carry ad ids, context keys (department/category words) and counts. Uncaught exceptions and an invalid ad config are logged through the same layout (`fatal`). `LogShapeTest` pins the shape against the real `log4j2.xml`.
 
-**Metrics** are pushed over OTLP, there is no scrape endpoint (documented exception to the port-9090 rule: the Java service delivers its RED series over OTLP). `build_info{service,version,commit}` is a gauge with value 1.
+**Metrics** are pushed over OTLP, there is no scrape endpoint (documented exception to the port-9090 rule: the Java service delivers its RED series over OTLP). `build_info{service,version,commit}` is a gauge with value 1. JVM runtime metrics (`opentelemetry-runtime-telemetry-java17`, JMX based): `jvm.memory.*`, `jvm.gc.*`, `jvm.thread.count`, `jvm.class.*`, `jvm.cpu.*` (Prometheus `jvm_memory_used_bytes` and the like).
 
 **Profiling** is on only with `PYROSCOPE_ADDR`.
 
@@ -244,7 +246,7 @@ docker run --rm -p 9555:9555 \
 
 ### Manual gRPC testing
 
-No reflection, so the proto is required:
+Reflection is on, so `grpcurl` needs no proto (`-proto` also works):
 
 Without a local `grpcurl`, the container image works against a running container (this is how the new RPCs were checked on 2026-11-01: see Verification):
 

@@ -3,6 +3,8 @@ package hipstershop;
 import io.grpc.Server;
 import io.grpc.ServerBuilder;
 import io.grpc.health.v1.HealthCheckResponse.ServingStatus;
+import io.grpc.protobuf.services.ProtoReflectionService;
+import io.grpc.protobuf.services.ProtoReflectionServiceV1;
 import io.grpc.services.HealthStatusManager;
 import io.opentelemetry.instrumentation.grpc.v1_6.GrpcTelemetry;
 import io.opentelemetry.sdk.OpenTelemetrySdk;
@@ -62,11 +64,11 @@ public final class AdService {
 
         GrpcTelemetry grpcTelemetry = GrpcTelemetry.create(otelSdk);
         Metrics metrics = new Metrics(otelSdk);
+        AutoCloseable runtimeMetrics = Telemetry.registerRuntimeMetrics(otelSdk);
         HealthStatusManager healthMgr = new HealthStatusManager();
 
-        Server server = ServerBuilder.forPort(port)
+        Server server = addStandardServices(ServerBuilder.forPort(port), healthMgr)
             .addService(new AdServiceImpl(metrics, catalog))
-            .addService(healthMgr.getHealthService())
             .intercept(grpcTelemetry.newServerInterceptor())
             .build()
             .start();
@@ -88,10 +90,23 @@ public final class AdService {
                 Thread.currentThread().interrupt();
                 server.shutdownNow();
             }
+            try {
+                runtimeMetrics.close();
+            } catch (Exception e) {
+                logger.warn("closing runtime metrics failed: {}", e.getClass().getSimpleName());
+            }
             Telemetry.shutdown(otelSdk, Duration.ofSeconds(5));
         }));
 
         server.awaitTermination();
+    }
+
+    /** Health and server reflection (CODE-02): reflection v1 and the older v1alpha that grpcurl versions still ask for. */
+    static ServerBuilder<?> addStandardServices(ServerBuilder<?> builder, HealthStatusManager health) {
+        return builder
+            .addService(health.getHealthService())
+            .addService(ProtoReflectionServiceV1.newInstance())
+            .addService(ProtoReflectionService.newInstance());
     }
 
     private static String configSource() {

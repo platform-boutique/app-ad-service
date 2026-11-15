@@ -45,8 +45,9 @@ USER 10001:10001
 
 EXPOSE 9555
 
-# The service has no healthcheck subcommand: TCP connect to the gRPC port with busybox nc (JRE alpine image)
+# Exec form (CODE-03): the JVM runs the gRPC health probe itself (hipstershop.HealthCheck), no shell, nc or curl.
+# Small heap and the cheap JIT tier: the probe only opens one channel.
 HEALTHCHECK --interval=10s --timeout=5s --start-period=20s --retries=3 \
-    CMD nc -z localhost ${PORT:-9555} || exit 1
+    CMD ["java", "-Xmx32m", "-XX:+UseSerialGC", "-XX:TieredStopAtLevel=1", "-XX:-UsePerfData", "-cp", "/app/lib/*", "hipstershop.HealthCheck"]
 
 ENTRYPOINT ["bin/AdService"]
