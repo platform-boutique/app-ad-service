@@ -25,6 +25,13 @@ tasks.withType(JavaCompile) {
     targetCompatibility = JavaVersion.VERSION_21
 }
 
+// Reproducible builds (SEC-01): every resolvable configuration is locked in gradle.lockfile.
+// A resolution that differs from the lockfile fails the build. To change dependencies, update the
+// versions below, run `./gradlew test installDist --write-locks` and commit the new gradle.lockfile.
+dependencyLocking {
+    lockAllConfigurations()
+}
+
 // Force all transitive Netty deps to a patched version (Trivy HIGH/CRITICAL, fixed in 4.1.137.Final)
 configurations.configureEach {
     resolutionStrategy.eachDependency { DependencyResolveDetails details ->

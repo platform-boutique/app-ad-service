@@ -244,6 +244,8 @@ docker run --rm -p 9555:9555 \
 ./gradlew test
 ```
 
+Dependencies are locked (`gradle.lockfile`, SEC-01): a resolution that differs from the lockfile fails the build. After changing a version in `build.gradle`, regenerate it with `./gradlew installDist dependencies --write-locks` (run `installDist` and `dependencies` in the same call, `test` in a separate one) and commit the lockfile.
+
 ### Manual gRPC testing
 
 Reflection is on, so `grpcurl` needs no proto (`-proto` also works):
