@@ -1,8 +1,9 @@
-# Local secret blocking. One-time setup per clone:  pipx install pre-commit && pre-commit install
-# - every commit: gitleaks scans the staged changes, plus private-key / large-file checks
-# - every push:   gitleaks scans the commits being pushed before anything leaves the machine
-# This is a fast local guard (git push --no-verify skips it); GitHub push protection and the
-# CI secret scan are the enforcing layers.
+# Local guard that runs the same checks as CI. One-time setup per clone:  pipx install pre-commit && pre-commit install
+# - every commit: gitleaks scans the staged changes, private-key / large-file checks, no format hook (CI has no Java formatter)
+# - every push:   gitleaks scans the commits being pushed, gradle compileJava
+# Format and lint use the same tools and pinned versions as the shared CI workflow (platform-demo-workflows), so a clean
+# local run means the `Lint & Format` job passes. This is a fast local guard (git push --no-verify skips it); the CI jobs,
+# GitHub push protection and the CI secret scan are the enforcing layers.
 default_install_hook_types: [pre-commit, pre-push]
 
 repos:
@@ -22,6 +23,14 @@ repos:
 
   - repo: local
     hooks:
+      # The CI `Lint & Format` job for Java is a warning-mode compile; needs a JDK 21 (the Gradle wrapper downloads Gradle).
+      - id: gradle-compile
+        name: gradlew compileJava --warning-mode all (as CI)
+        language: system
+        entry: ./gradlew compileJava --warning-mode all
+        files: '\.(java|gradle)$'
+        pass_filenames: false
+        stages: [pre-push]
       - id: gitleaks-push
         name: gitleaks (commits being pushed)
         language: golang
