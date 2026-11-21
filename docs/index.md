@@ -17,6 +17,8 @@ A gRPC service that serves contextual advertisements for the platform-demo e-com
 
 Called by `frontend`. It has no downstream dependencies.
 
+Pages: [architecture](architecture.md), [API](api.md), [configuration](configuration.md), [observability](observability.md), [operations](operations.md), [development](development.md), [decisions](adr/0001-ads-from-config-with-in-memory-counters.md).
+
 ```mermaid
 flowchart LR
   ad_service["<b>ad-service</b><br/>9555 (gRPC)"]:::me
