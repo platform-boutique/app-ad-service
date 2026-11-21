@@ -6,13 +6,17 @@ repo_url: https://github.com/platform-boutique/app-ad-service
 edit_uri: edit/main/docs/
 nav:
   - Overview: index.md
+  - Architecture: architecture.md
   - API: api.md
   - Configuration: configuration.md
   - Container image: container-image.md
   - Kubernetes: kubernetes.md
   - Observability: observability.md
+  - Operations: operations.md
   - Develop & test: development.md
   - Known limitations: limitations.md
+  - Decisions:
+      - "1. Ads from config, in-memory counters": adr/0001-ads-from-config-with-in-memory-counters.md
 theme:
   name: material
   features:

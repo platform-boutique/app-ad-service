@@ -129,7 +129,7 @@ Multi-stage [`Dockerfile`](Dockerfile):
 - **Docker `HEALTHCHECK`:** exec form (no shell, nc or curl): `java -cp "/app/lib/*" hipstershop.HealthCheck` asks the local server for its standard `grpc.health.v1` status and exits 0 only for `SERVING` (`PORT` honoured, default 9555; heap capped at 32 MB for the probe). Kubernetes ignores it and uses gRPC probes (below).
 - **Image size:** ~107 MB.
 - **`RUN apk upgrade --no-cache`** in the runtime stage pulls Alpine security fixes published after the `eclipse-temurin:21-jre-alpine` base was built (the image scan failed on a fixable HIGH finding in `brotli-libs`). This makes builds non-reproducible over time by design; the scan is the reason it is there.
-- **Build context:** the service root. No `.dockerignore` is present, so `build/`, `.gradle/` and `.git` are sent to the daemon — add one if builds feel slow.
+- **Build context:** the service root with a [`.dockerignore`](.dockerignore) that keeps `.git`, `build/`, `.gradle/`, IDE files, keys and docs out of the context (the image build needs `gradlew`, `gradle/`, `build.gradle`, `settings.gradle` and `src/`).
 
 ## Kubernetes deployment notes
 
@@ -169,7 +169,7 @@ livenessProbe:
 securityContext:
   runAsNonRoot: true
   runAsUser: 10001
-  runAsGroup: 101
+  runAsGroup: 10001
   allowPrivilegeEscalation: false
   capabilities: { drop: ["ALL"] }
   readOnlyRootFilesystem: true   # verified — needs an emptyDir at /tmp that allows exec (Pyroscope native library)
@@ -297,6 +297,20 @@ Run on 2026-11-01 (branch `feat/ads-config-clicks`):
 - `installDist` and the start script run in the same container: with `OTEL_EXPORTER_OTLP_ENDPOINT=http://192.0.2.1:4317` (blackhole) SIGTERM ended the process in 4 s (exit 143); an empty endpoint starts with telemetry off and JSON lines only.
 - Not run: the Docker image build, the compose stack, export to a real Alloy/Tempo/Loki, Pyroscope profiles with the new tags.
 
+## Develop
+
+Requirements: JDK 21 (the host has Java 1.8, so run Gradle in the `eclipse-temurin:21-jdk-alpine` container), Docker for the image, Python 3.12 for the docs check. The commands below are the ones the shared pipeline (`platform-demo-workflows`, `service-ci-java`) runs, so a failure can be reproduced without pushing. `Running locally` above has the run commands. There is no dependency audit step for Gradle in the pipeline or here: not run.
+
+| Step | Command | Result on 2026-11-21 |
+|---|---|---|
+| Compile and tests | `./gradlew test --no-daemon` (run in `eclipse-temurin:21-jdk-alpine` with `apk add libc6-compat`, `--memory 1g`, a Gradle home outside the repository, as JDK 21 is not on the host); the shared pipeline's lint is `./gradlew compileJava --warning-mode all` (a compile, no checkstyle or spotless) | run: BUILD SUCCESSFUL, 241 tests, 0 failures, 0 errors, 0 skipped |
+| Build | `./gradlew build -x test --no-daemon` | not run (`test` compiles the code) |
+| Image | `docker build -t platform-demo/ad-service:local .` | not run today |
+| Image scan | `trivy image --severity CRITICAL,HIGH --exit-code 1 platform-demo/ad-service:local` | not run today |
+| Secret scan | `pre-commit run --all-files` (`.pre-commit-config.yaml`, gitleaks) or `gitleaks git --redact` | run with the gitleaks binary of the pre-commit cache (`gitleaks git --redact`, full history, 47 commits): no leaks found |
+| Workflow lint | `actionlint` | run (actionlint 1.7.12), no findings |
+| Docs | `mkdocs build --strict` (mkdocs 1.6.1 + mkdocs-techdocs-core 1.7.1, Python 3.12 venv) and the link check `python3 -I tools/check-md-links.py .` from `platform-demo-workflows` (relative links in `README.md` and `docs/`) | run, both passed |
+
 ## Project structure
 
 ```
@@ -317,7 +331,7 @@ Run on 2026-11-01 (branch `feat/ads-config-clicks`):
 │       ├── ads.json             # bundled default ad config
 │       ├── log4j2.xml           # appenders, levels
 │       └── LogShape.json        # the JSON log shape
-├── build.gradle                 # gRPC 1.79, OTel 1.49, Micrometer, Pyroscope agent, pinned Netty
+├── build.gradle                 # gRPC 1.79, OTel 1.49, Pyroscope agent, pinned Netty
 ├── settings.gradle
 ├── gradlew / gradle/
 └── Dockerfile                   # JDK builder -> JRE runtime
