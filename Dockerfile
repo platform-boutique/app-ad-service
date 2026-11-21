@@ -10,6 +10,8 @@ COPY gradlew .
 COPY gradle gradle
 COPY build.gradle .
 COPY settings.gradle .
+# Locked dependency versions (SEC-01): the build fails when the resolution differs from gradle.lockfile
+COPY gradle.lockfile .
 RUN chmod +x gradlew
 RUN ./gradlew dependencies --no-daemon
 COPY src src
