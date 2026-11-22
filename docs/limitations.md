@@ -2,5 +2,10 @@
 
 - The ads are read once at start (bundled `ads.json` or `ADS_CONFIG`); changing them means restarting the process.
 - Impression/click counters and the rotation counter are in memory and per process: they reset on restart and are not shared between replicas.
-- Telemetry/profiling are always on (no kill switch); point the endpoints at something reachable or expect periodic exporter error logs.
-- Graceful shutdown calls `server.shutdown()` but does not await in-flight RPCs; set a short `terminationGracePeriodSeconds` (10–15 s is plenty).
+- The keywords of the bundled ads are a copy of the catalog's category words; categories added to the catalog later fall back to random ads until they are added to the config.
+- With an OTLP endpoint set but unreachable, the exporters log errors periodically; set no endpoint, or `OTEL_SDK_DISABLED=true`, to turn telemetry off.
+- Graceful shutdown: `server.shutdown()`, then up to 3 s for in-flight RPCs (then `shutdownNow()`), then up to 5 s to flush telemetry; a `terminationGracePeriodSeconds` of 10 to 15 s is plenty. The Pyroscope agent is not stopped, so the last seconds of CPU samples are dropped.
+- Under plain Docker or Compose the image `HEALTHCHECK` starts a JVM every 10 s (about 1.2 to 1.7 s wall time and about 79 MB peak memory per run, measured 2026-11-22: [Operations](operations.md#cost-of-the-image-healthcheck)). Kubernetes uses its own gRPC probes and does not run it.
+- Metrics are pushed over OTLP, there is no scrape endpoint ([ADR 4](adr/0004-metrics-pushed-over-otlp.md)); logs have no `request_id` (gRPC backends identify a request by `trace_id`, decision 2026-11-14).
+- `./gradlew installDist test` in ONE call fails with a Gradle implicit-dependency validation error on `build/tmp` (the `adService` start-script task writes into `build/tmp`, which `installDist` then copies whole). The same code is on `main`. The pipeline and this README run `installDist` and `test` as separate calls, which work. The `bin/` folder of the installed distribution therefore also holds the stray folders `jar/`, `compileJava/` and `.cache/` (harmless, found 2026-11-22). Changing the output directory of `adService` would fix both and is left out on purpose: the repository is frozen and the fix would change the build output.
+- No code coverage report in the shared pipeline for Java (TEST-06 is a SHOULD). Measured once with JaCoCo through a Gradle init script, without touching the build: see [Develop & test](development.md).

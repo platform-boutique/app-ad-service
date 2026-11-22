@@ -126,9 +126,10 @@ Multi-stage [`Dockerfile`](Dockerfile):
 - **Entrypoint:** `bin/AdService` (working dir `/app`). Honours `JAVA_OPTS` / `JAVA_TOOL_OPTIONS`.
 - **User:** numeric `USER 10001:10001` (`appuser`/`appgroup`, created with these fixed ids; `id` in the container prints `uid=10001(appuser) gid=10001(appgroup)`). Build args `SERVICE_VERSION` (default `dev`) and `SERVICE_COMMIT` (default `unknown`) set the OCI labels `version`/`revision` (plus `source`, `licenses=Apache-2.0`) and the ENV of the same names.
 - **EXPOSE:** `9555`.
-- **Docker `HEALTHCHECK`:** exec form (no shell, nc or curl): `java -cp "/app/lib/*" hipstershop.HealthCheck` asks the local server for its standard `grpc.health.v1` status and exits 0 only for `SERVING` (`PORT` honoured, default 9555; heap capped at 32 MB for the probe). Kubernetes ignores it and uses gRPC probes (below).
-- **Image size:** ~107 MB.
+- **Docker `HEALTHCHECK`:** exec form (no shell, nc or curl): `java -cp "/app/lib/*" hipstershop.HealthCheck` asks the local server for its standard `grpc.health.v1` status and exits 0 only for `SERVING` (`PORT` honoured, default 9555; heap capped at 32 MB for the probe). It starts a JVM every 10 s (about 1.2 to 1.7 s wall time, about 79 MB peak memory per run, measured 2026-11-22: `docs/operations.md`, `docs/adr/0003-healthcheck-runs-a-jvm-in-exec-form.md`). Kubernetes ignores it and uses gRPC probes (below).
+- **Image size:** 109 MB (`docker image inspect`, built 2026-11-22 for linux/amd64; `docker images` lists the same image as 363 MB).
 - **`RUN apk upgrade --no-cache`** in the runtime stage pulls Alpine security fixes published after the `eclipse-temurin:21-jre-alpine` base was built (the image scan failed on a fixable HIGH finding in `brotli-libs`). This makes builds non-reproducible over time by design; the scan is the reason it is there.
+- **Base images** are pinned by digest (`@sha256:`, IMG-01); Dependabot (monthly) proposes new ones. The image is `linux/amd64` only.
 - **Build context:** the service root with a [`.dockerignore`](.dockerignore) that keeps `.git`, `build/`, `.gradle/`, IDE files, keys and docs out of the context (the image build needs `gradlew`, `gradle/`, `build.gradle`, `settings.gradle` and `src/`).
 
 ## Kubernetes deployment notes
@@ -240,22 +241,19 @@ docker run --rm -p 9555:9555 \
   -e PYROSCOPE_ADDR=http://host.docker.internal:4040 \
   ad-service
 
-# unit tests
+# unit tests (a separate call from installDist, see Known limitations)
 ./gradlew test
 ```
 
-Dependencies are locked (`gradle.lockfile`, SEC-01): a resolution that differs from the lockfile fails the build. After changing a version in `build.gradle`, regenerate it with `./gradlew installDist dependencies --write-locks` (run `installDist` and `dependencies` in the same call, `test` in a separate one) and commit the lockfile.
+Dependencies are locked (`gradle.lockfile`, SEC-01): a resolution that differs from the lockfile fails the build. After changing a version in `build.gradle`, regenerate it with `./gradlew installDist dependencies --write-locks` (run `installDist` and `dependencies` in the same call, `test` in a separate one: see Known limitations) and commit the lockfile.
 
 ### Manual gRPC testing
 
-Reflection is on, so `grpcurl` needs no proto (`-proto` also works):
-
-Without a local `grpcurl`, the container image works against a running container (this is how the new RPCs were checked on 2026-11-01: see Verification):
+Reflection is on, so `grpcurl` needs no proto (`-proto` also works). Without a local `grpcurl`, the `fullstorydev/grpcurl` image works against a running container:
 
 ```bash
-docker run --rm --network container:<ad-service container> -v "$PWD/src/main/proto:/p:ro" \
-  fullstorydev/grpcurl:v1.9.1 -plaintext -import-path /p -proto ad.proto \
-  -d '{"context_keys": ["kitchen"]}' localhost:9555 hipstershop.AdService/GetAds
+docker run --rm --network container:<ad-service container> fullstorydev/grpcurl:v1.9.1 \
+  -plaintext -d '{"context_keys": ["kitchen"]}' localhost:9555 hipstershop.AdService/GetAds
 ```
 
 ```bash
@@ -278,40 +276,31 @@ grpcurl -plaintext -proto src/main/proto/ad.proto \
 grpcurl -plaintext -proto src/main/proto/ad.proto -d '{}' \
   localhost:9555 hipstershop.AdService/GetAds
 
-# health (this repo has no health.proto; borrow the one from any sibling service)
-grpcurl -plaintext -import-path ../email-service/proto -proto health.proto \
-  localhost:9555 grpc.health.v1.Health/Check
-
-# metrics
+# health (the standard service, found through reflection)
+grpcurl -plaintext -d '{}' localhost:9555 grpc.health.v1.Health/Check
 ```
-
-## Verification
-
-Run on 2026-11-01 (branch `feat/ads-config-clicks`):
-
-- `./gradlew test --no-daemon` in `eclipse-temurin:21-jdk-alpine` (+ `libc6-compat`): 174 tests, 0 failures. Covers config loading (valid file, duplicate id, missing field per required field, bad path, invalid values), a matching table, rotation, `RecordClick`/`GetAdStats` through an in-process gRPC channel, concurrent counting, and the pre-existing `AdsMapTest`/`AdServiceImplTest`/`TelemetryTest` unchanged.
-- `docker build -t ad-service:local .` succeeded. A container on a throwaway network, called with `grpcurl` (`-proto`, no reflection): `GetAds` with a department key, a search word and `footwear` twice (different pairs), with no keys; `RecordClick` for a known id (OK) and an unknown id (`NotFound`); `GetAdStats` showing the impressions and the click. With `ADS_CONFIG` pointing at a one-ad file the container served only that ad; with a duplicate-id file and a missing file it exited 1 with the message above. `docker stop` ran the shutdown hook (log line `Shutting down AdService...`, exit 143). The container started with no telemetry variables logged "Telemetry disabled" and "Profiling disabled".
-- Not run: the `ads_*_total` export to a real collector, a Kubernetes deployment, the CI pipeline.
-
-### Observability step 3 (2026-11-13, branch `feat/observability-step3`)
-
-- `./gradlew test --no-daemon` in `eclipse-temurin:21-jdk-alpine` (+ `libc6-compat`, `--memory 768m`): all tests pass (226 tests, 0 failures; the last run). New: env matrix for telemetry and profiling (`TelemetryTest`), resource attributes, Pyroscope labels, a blackholed collector (TCP socket that never answers: startup < 5 s, shutdown < 9 s asserted, about 5 s measured), log shape incl. trace ids inside and outside a span (`LogShapeTest`), level and version resolution (`LogConfigTest`).
-- `installDist` and the start script run in the same container: with `OTEL_EXPORTER_OTLP_ENDPOINT=http://192.0.2.1:4317` (blackhole) SIGTERM ended the process in 4 s (exit 143); an empty endpoint starts with telemetry off and JSON lines only.
-- Not run: the Docker image build, the compose stack, export to a real Alloy/Tempo/Loki, Pyroscope profiles with the new tags.
 
 ## Develop
 
-Requirements: JDK 21 (the host has Java 1.8, so run Gradle in the `eclipse-temurin:21-jdk-alpine` container), Docker for the image, Python 3.12 for the docs check. The commands below are the ones the shared pipeline (`platform-demo-workflows`, `service-ci-java`) runs, so a failure can be reproduced without pushing. `Running locally` above has the run commands. There is no dependency audit step for Gradle in the pipeline or here: not run.
+Requirements: JDK 21 (the host has Java 1.8, so run Gradle in the `eclipse-temurin:21-jdk-alpine` container), Docker for the image, Python 3.12 for the docs check. The commands below are the ones the shared pipeline (`platform-demo-workflows`, `service-ci-java`) runs, so a failure can be reproduced without pushing. `Running locally` has the run commands.
 
-| Step | Command | Result on 2026-11-21 |
+| Step | Command | Result on 2026-11-22 |
 |---|---|---|
-| Compile and tests | `./gradlew test --no-daemon` (run in `eclipse-temurin:21-jdk-alpine` with `apk add libc6-compat`, `--memory 1g`, a Gradle home outside the repository, as JDK 21 is not on the host); the shared pipeline's lint is `./gradlew compileJava --warning-mode all` (a compile, no checkstyle or spotless) | run: BUILD SUCCESSFUL, 241 tests, 0 failures, 0 errors, 0 skipped |
-| Build | `./gradlew build -x test --no-daemon` | not run (`test` compiles the code) |
-| Image | `docker build -t platform-demo/ad-service:local .` | not run today |
-| Image scan | `trivy image --severity CRITICAL,HIGH --exit-code 1 platform-demo/ad-service:local` | not run today |
-| Secret scan | `pre-commit run --all-files` (`.pre-commit-config.yaml`, gitleaks) or `gitleaks git --redact` | run with the gitleaks binary of the pre-commit cache (`gitleaks git --redact`, full history, 47 commits): no leaks found |
-| Workflow lint | `actionlint` | run (actionlint 1.7.12), no findings |
-| Docs | `mkdocs build --strict` (mkdocs 1.6.1 + mkdocs-techdocs-core 1.7.1, Python 3.12 venv) and the link check `python3 -I tools/check-md-links.py .` from `platform-demo-workflows` (relative links in `README.md` and `docs/`) | run, both passed |
+| Unit tests | `./gradlew cleanTest test --no-daemon` (in `eclipse-temurin:21-jdk-alpine` + `apk add libc6-compat`, `--memory 1500m`, run as the host user with a Gradle home outside the repository, as JDK 21 is not on the host) | run: BUILD SUCCESSFUL, 241 tests, 0 failures, 0 errors, 0 skipped |
+| Build | `./gradlew build -x test --no-daemon` (a separate call; `installDist test` in one call fails, see Known limitations) | run: BUILD SUCCESSFUL |
+| Lint | `./gradlew compileJava --warning-mode all` is the pipeline's compile; the pipeline also reports `javac -Xlint:all` (v3.8.0, report only), reproduce with an init script that adds `-Xlint:all` to every `JavaCompile` task | run on `compileJava` and `compileTestJava` with `--rerun-tasks`: 0 warnings (it was 6 in main and 8 in the tests before this bundle) |
+| Coverage | not in the build or the pipeline; measured once with the JaCoCo plugin 0.8.13 added by a Gradle init script (nothing committed) | run: 83.6 % of the lines of the hand-written classes (498 of 596), 37.1 % including the generated protobuf classes |
+| Image | `docker build --pull --platform linux/amd64 --build-arg SERVICE_VERSION=final-test --build-arg SERVICE_COMMIT=<sha> -t platform-demo/ad-service:local .` | run: built, 109 MB (`docker image inspect`), `USER 10001:10001`, exec-form HEALTHCHECK reports `healthy`, reflection and the three RPCs answer, `docker stop` ends it in 0.8 s with exit 143 and the log line `Shutting down AdService...` |
+| Image scan | `trivy image --severity CRITICAL,HIGH --exit-code 1 platform-demo/ad-service:local` (Trivy 0.76.1) | run: exit 0, no CRITICAL or HIGH findings |
+| Dependency scan | `trivy fs --scanners vuln --severity CRITICAL,HIGH --exit-code 1 .` (what the pipeline's Dependency scan does, reads `gradle.lockfile`) | run: exit 0, no CRITICAL or HIGH findings |
+| Code scan | `semgrep scan --config p/java --config p/owasp-top-ten --error --metrics=off` (semgrep 1.180.0, as the pipeline) | run: 0 findings (100 rules, 50 files) |
+| Secret scan | `pre-commit run --all-files` (`.pre-commit-config.yaml`, gitleaks) or `gitleaks git --redact` | run with the gitleaks binary of the pre-commit cache, full history: no leaks found |
+| Workflow lint | `actionlint` | run on 2026-11-21 (actionlint 1.7.12), no findings; the workflow files changed since only in the pinned `uses:` lines (v3.8.0): not re-run |
+| Docs | `mkdocs build --strict` (mkdocs 1.6.1 + mkdocs-techdocs-core 1.7.1, Python 3.12 venv) and the link check `python3 -I tools/check-md-links.py .` from `platform-demo-workflows` | run, both passed (19 relative links in 16 pages, 0 broken) |
+| Whole shop | local compose stack with this image, `local/smoke.sh` three times in a row | run: SMOKE PASSED 3 times, 87 PASS each, including the ad steps on the product, department and search pages and the ad click redirects; afterwards the ad-service container was `healthy` with 0 restarts, 134 log lines of which 0 `error`/`fatal`/`warning`, 132 MiB |
+| Telemetry export | the image next to a throwaway Alloy with a debug exporter, `OTEL_EXPORTER_OTLP_ENDPOINT` set | run: the image started next to a throwaway Alloy with a debug exporter (`OTEL_EXPORTER_OTLP_ENDPOINT` set, 2 s metric interval). Received: `ads_impressions_total{ad_id}` (men-1 and men-2 = 3 after 3 `GetAds` calls), `ads_clicks_total{ad_id=men-1}` = 1, `build_info{version,commit}`, `rpc_server_*`, 20 `jvm.*` metrics, spans and log records; 0 error lines in the service log |
+
+Not run: a Kubernetes deployment, the real LGTM stack (Mimir, Tempo, Loki; only a debug receiver was used), Pyroscope profiles, arm64 (amd64 only by decision), `buf` locally (the pipeline's Proto check runs it; `ad.proto` is unchanged by this bundle), a Gradle dependency audit beyond Trivy.
 
 ## Project structure
 
@@ -327,13 +316,16 @@ Requirements: JDK 21 (the host has Java 1.8, so run Gradle in the `eclipse-temur
 │   │   ├── Metrics.java         # rpc_server_*, ads_*_total and build_info OTel metrics
 │   │   ├── Telemetry.java       # OTel SDK + Pyroscope init, env contract, bounded shutdown
 │   │   ├── LogConfig.java       # LOG_LEVEL / service name / version for log4j2.xml, java.util.logging bridge
+│   │   ├── OtlpEnv.java         # OTEL_EXPORTER_OTLP_* headers and TLS files
+│   │   ├── HealthCheck.java     # the image HEALTHCHECK: asks the local server for grpc.health.v1 status
 │   │   └── BuildInfo.java       # version (SERVICE_VERSION, manifest, dev) and commit
 │   ├── proto/ad.proto           # service contract
 │   └── resources/
 │       ├── ads.json             # bundled default ad config
 │       ├── log4j2.xml           # appenders, levels
 │       └── LogShape.json        # the JSON log shape
-├── build.gradle                 # gRPC 1.79, OTel 1.49, Pyroscope agent, pinned Netty
+├── build.gradle                 # gRPC 1.79, OTel 1.49, Pyroscope agent, pinned Netty, dependency locking
+├── gradle.lockfile              # locked dependency versions (SEC-01)
 ├── settings.gradle
 ├── gradlew / gradle/
 └── Dockerfile                   # JDK builder -> JRE runtime
@@ -351,3 +343,7 @@ Requirements: JDK 21 (the host has Java 1.8, so run Gradle in the `eclipse-temur
 - With an endpoint set but unreachable, the exporters log errors periodically (set none, or OTEL_SDK_DISABLED=true, to turn telemetry off).
 - Graceful shutdown: `server.shutdown()`, then up to 3 s for in-flight RPCs (then `shutdownNow()`), then up to 5 s to flush telemetry; `terminationGracePeriodSeconds` of 10-15 s is plenty.
 - The Pyroscope agent is not stopped on SIGTERM, so the last seconds of CPU samples are dropped.
+- Under plain Docker or Compose the image `HEALTHCHECK` starts a JVM every 10 s (about 1.2 to 1.7 s wall time and about 79 MB peak memory per run, measured 2026-11-22: `docs/operations.md`). Kubernetes uses its own gRPC probes and does not run it.
+- Metrics are pushed over OTLP, there is no scrape endpoint (`docs/adr/0004-metrics-pushed-over-otlp.md`); logs have no `request_id` (gRPC backends identify a request by `trace_id`, decision 2026-11-14).
+- `./gradlew installDist test` in ONE call fails with a Gradle implicit-dependency validation error on `build/tmp` (the `adService` start-script task writes into `build/tmp`, which `installDist` then copies whole; the same code is on `main`). Run `installDist` and `test` as separate calls, as the pipeline does. The `bin/` folder of the installed distribution (and of the image) therefore also holds the stray folders `jar/`, `compileJava/` and `.cache/`; they are harmless. Pointing the `adService` task at its own output directory would fix both, and is left out on purpose: the repository is frozen and the change would alter the build output (found 2026-11-22).
+- No code coverage report in the shared pipeline for Java (TEST-06 is a SHOULD); measured once with JaCoCo through a Gradle init script, see Develop.
