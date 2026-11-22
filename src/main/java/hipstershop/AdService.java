@@ -3,9 +3,9 @@ package hipstershop;
 import io.grpc.Server;
 import io.grpc.ServerBuilder;
 import io.grpc.health.v1.HealthCheckResponse.ServingStatus;
+import io.grpc.protobuf.services.HealthStatusManager;
 import io.grpc.protobuf.services.ProtoReflectionService;
 import io.grpc.protobuf.services.ProtoReflectionServiceV1;
-import io.grpc.services.HealthStatusManager;
 import io.opentelemetry.instrumentation.grpc.v1_6.GrpcTelemetry;
 import io.opentelemetry.sdk.OpenTelemetrySdk;
 import java.io.IOException;
@@ -36,6 +36,8 @@ public final class AdService {
 
     private static final Logger logger = LogManager.getLogger(AdService.class);
 
+    // "try": the thread-context scope only has to exist while the start line is logged, the resource is never read
+    @SuppressWarnings("try")
     public static void main(String[] args) throws IOException, InterruptedException {
         // Anything that escapes main (or a thread) is logged as one JSON line, not a bare stack trace on stderr.
         Thread.setDefaultUncaughtExceptionHandler((t, e) ->
@@ -101,7 +103,11 @@ public final class AdService {
         server.awaitTermination();
     }
 
-    /** Health and server reflection (CODE-02): reflection v1 and the older v1alpha that grpcurl versions still ask for. */
+    /**
+     * Health and server reflection (CODE-02): reflection v1 and the older v1alpha that grpcurl versions still ask for.
+     * "deprecation": v1alpha is deprecated in gRPC in favour of v1 but has no other replacement; it stays for older clients.
+     */
+    @SuppressWarnings("deprecation")
     static ServerBuilder<?> addStandardServices(ServerBuilder<?> builder, HealthStatusManager health) {
         return builder
             .addService(health.getHealthService())

@@ -1,5 +1,5 @@
 # ---- Build stage ----
-FROM eclipse-temurin:21-jdk-alpine AS builder
+FROM eclipse-temurin:21-jdk-alpine@sha256:c07bb82e004a166b5d3d63b84ad70e2e822f228505e2e0c0b8dfdc2890d22f13 AS builder
 
 WORKDIR /app
 
@@ -18,7 +18,7 @@ COPY src src
 RUN ./gradlew installDist --no-daemon
 
 # ---- Runtime stage ----
-FROM eclipse-temurin:21-jre-alpine AS runtime
+FROM eclipse-temurin:21-jre-alpine@sha256:5d7689f47d670aca766b9503a70bccc2d73b4eb9221ae8f714ae958313c4ce70 AS runtime
 
 # Pick up Alpine security fixes published after the base image was built (the image scan fails on fixable HIGH/CRITICAL findings)
 RUN apk upgrade --no-cache

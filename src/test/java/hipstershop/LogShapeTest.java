@@ -93,6 +93,7 @@ class LogShapeTest {
     }
 
     @Test
+    @SuppressWarnings("try")
     void line_insideASpan_carriesTheTraceAndSpanId() throws Exception {
         SdkTracerProvider provider = SdkTracerProvider.builder().build();   // in-memory, no exporter
         Tracer tracer = provider.get("test");
@@ -111,6 +112,7 @@ class LogShapeTest {
     }
 
     @Test
+    @SuppressWarnings("try")
     void line_afterTheSpanScopeEnds_hasNoIdsAgain() throws Exception {
         SdkTracerProvider provider = SdkTracerProvider.builder().build();
         Span span = provider.get("test").spanBuilder("op").startSpan();
@@ -151,6 +153,7 @@ class LogShapeTest {
     }
 
     @Test
+    @SuppressWarnings("try")
     void commitField_appearsOnlyWhenPutInTheContext() throws Exception {
         try (CloseableThreadContext.Instance ignored = CloseableThreadContext.put("commit", "abc1234")) {
             log.info("starting");

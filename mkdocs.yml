@@ -17,6 +17,10 @@ nav:
   - Known limitations: limitations.md
   - Decisions:
       - "1. Ads from config, in-memory counters": adr/0001-ads-from-config-with-in-memory-counters.md
+      - "2. Proto package stays hipstershop": adr/0002-proto-package-stays-hipstershop.md
+      - "3. Healthcheck runs a JVM in exec form": adr/0003-healthcheck-runs-a-jvm-in-exec-form.md
+      - "4. Metrics pushed over OTLP": adr/0004-metrics-pushed-over-otlp.md
+      - "5. Reflection v1 and v1alpha": adr/0005-reflection-v1-and-v1alpha.md
 theme:
   name: material
   features:

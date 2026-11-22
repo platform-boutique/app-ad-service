@@ -40,4 +40,8 @@ The matching rules and the config schema are in the README. The counters are exp
 
 ## Decisions
 
-[ADR 1](adr/0001-ads-from-config-with-in-memory-counters.md).
+1. [Ads from a JSON config, counters in memory](adr/0001-ads-from-config-with-in-memory-counters.md)
+2. [The proto package stays `hipstershop`](adr/0002-proto-package-stays-hipstershop.md)
+3. [The image HEALTHCHECK starts a short JVM in exec form](adr/0003-healthcheck-runs-a-jvm-in-exec-form.md)
+4. [Metrics are pushed over OTLP](adr/0004-metrics-pushed-over-otlp.md)
+5. [Server reflection registers v1 and v1alpha](adr/0005-reflection-v1-and-v1alpha.md)

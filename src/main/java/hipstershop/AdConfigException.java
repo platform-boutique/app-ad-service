@@ -2,6 +2,7 @@ package hipstershop;
 
 /** The ad configuration is missing, unreadable or invalid. The service refuses to start on it. */
 final class AdConfigException extends RuntimeException {
+    private static final long serialVersionUID = 1L;
 
     AdConfigException(String message) {
         super(message);
