@@ -5,7 +5,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import io.grpc.Server;
 import io.grpc.ServerBuilder;
 import io.grpc.health.v1.HealthCheckResponse.ServingStatus;
-import io.grpc.services.HealthStatusManager;
+import io.grpc.protobuf.services.HealthStatusManager;
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.time.Duration;
